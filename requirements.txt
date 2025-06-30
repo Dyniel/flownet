@@ -1,0 +1,9 @@
+numpy
+torch
+torch-scatter
+torch-geometric
+scikit-learn
+meshio
+matplotlib
+PyYAML
+wandb
