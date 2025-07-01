@@ -16,6 +16,22 @@ This project provides a comprehensive suite for training and validating Graph Ne
 *   **Weights & Biases Integration**: Comprehensive logging of metrics, configurations, and artifacts.
 *   **Multiple Validation Strategies**: Supports both geometry-based graph construction (k-NN) and topology-based (full mesh from tetrahedra).
 
+## Recent Enhancements (July 2024)
+
+*   **Memory Optimization**:
+    *   Resolved potential CUDA OutOfMemoryErrors during training by enabling graph downsampling (via `down_n` in `graph_config`) and implementing activation checkpointing within the GNN models. This allows training with larger graphs/models on memory-constrained GPUs.
+*   **Flexible Data Source Selection**:
+    *   The main training script (`scripts/2_train_model.py`) now includes a `--data-source` command-line flag. This allows users to easily switch between training and validating on `clean` or `noisy` datasets (default is `noisy`).
+    *   Example: `python scripts/2_train_model.py --data-source clean ...`
+*   **Enhanced Metrics**:
+    *   **Component-wise Velocity MSE**: Validation now includes Mean Squared Error for each velocity component (X, Y, Z), logged as `val_mse_x`, `val_mse_y`, `val_mse_z`.
+    *   **Vorticity Magnitude MSE**: Validation includes Mean Squared Error of the vorticity magnitude, logged as `val_mse_vorticity_mag`. This requires the `pyvista` library.
+*   **Improved Visualizations & Outputs**:
+    *   **Detailed Validation VTKs**: During validation steps in `2_train_model.py`, the script can now save detailed VTK files. These files include `true_velocity`, `predicted_velocity`, `velocity_error_magnitude`, `true_vorticity_magnitude`, and `predicted_vorticity_magnitude` fields. This feature is controlled by the `save_validation_fields_vtk: true` setting under `validation_during_training` in the YAML configuration.
+    *   **W&B Sample Image Logging**: A proof-of-concept has been implemented to log a visual comparison (2D slice of true/predicted/error velocity magnitudes) for a single validation sample directly to Weights & Biases during training. This provides a quick visual check of model performance.
+*   **Dependency Update**:
+    *   `pyvista` is now used for vorticity calculations. Ensure it is installed in your environment (`pip install pyvista`).
+
 ## Project Structure
 
 ```
@@ -35,7 +51,7 @@ This project provides a comprehensive suite for training and validating Graph Ne
 │       ├── __init__.py
 │       ├── data_utils.py         # Data loading, noise, graph building, Dataset class
 │       ├── losses.py             # Custom loss functions
-│       ├── metrics.py            # Evaluation metrics (TKE, CosSim, JSD)
+│       ├── metrics.py            # Evaluation metrics (TKE, CosSim, JSD, Vorticity)
 │       ├── models.py             # GNN model definitions (FlowNet, RotFlowNet)
 │       ├── training.py           # Training and during-training validation loops
 │       ├── utils.py              # General helper functions (config, seed, W&B, VTK I/O)
@@ -64,6 +80,7 @@ This project provides a comprehensive suite for training and validating Graph Ne
 3.  **Install Dependencies**:
     ```bash
     pip install -r requirements.txt
+    pip install pyvista pooch # For vorticity metrics and enhanced visualizations
     ```
     *Note: `torch`, `torch-scatter`, `torch-geometric` might require specific installation commands depending on your CUDA version. Refer to their official documentation if you encounter issues.*
 
@@ -94,6 +111,8 @@ This project provides a comprehensive suite for training and validating Graph Ne
 *   A `config/default_config.yaml` file provides default parameters for all aspects of the pipeline.
 *   You can create custom YAML configuration files (e.g., `my_experiment_config.yaml`) and pass them to scripts using the `--config path/to/your_config.yaml` argument.
 *   Command-line arguments provided directly to a script will override values from any loaded configuration file.
+*   The training script `2_train_model.py` supports a `--data-source [noisy|clean]` flag to select the input dataset type.
+*   To save detailed validation VTK fields (including error and vorticity), set `save_validation_fields_vtk: true` under `validation_during_training:` in your YAML config.
 
 ## Usage Examples
 
@@ -118,26 +137,35 @@ python scripts/1_prepare_noisy_data.py \
 **2. Train a Model:**
 Trains FlowNet and/or Gao-RotFlowNet.
 ```bash
+# Example: Training with noisy data (default)
 python scripts/2_train_model.py \
     --config config/my_training_setup.yaml \
-    --run-name flownet_experiment_run01 \
+    --run-name flownet_noisy_training \
+    --models-to-train FlowNet \
+    --epochs 150
+
+# Example: Training with clean data
+python scripts/2_train_model.py \
+    --config config/my_training_setup.yaml \
+    --run-name flownet_clean_training \
     --models-to-train FlowNet \
     --epochs 150 \
-    --no-wandb # Optionally disable W&B
+    --data-source clean
 ```
 *   `--config`: Path to your training config (can be omitted to use only defaults + CLI).
 *   `--run-name`: Unique name for this training run; outputs will be in `outputs/<run_name>`.
 *   `--models-to-train`: Specify one or more models (FlowNet, Gao/RotFlowNet).
+*   `--data-source`: `noisy` (default) or `clean`.
 *   (See script help for more options like LR, batch size, etc.)
 
 **3. Validate Model with k-NN Graphs:**
 Validates a trained model checkpoint using k-NN graph representation.
 ```bash
 python scripts/3a_validate_knn.py \
-    --model-checkpoint outputs/flownet_experiment_run01/models/flownet_best.pth \
+    --model-checkpoint outputs/flownet_noisy_training/models/flownet_best.pth \
     --model-name FlowNet \
     --val-data-dir data/CFD_Ubend_other_val \
-    --output-dir outputs/flownet_experiment_run01/validation_knn \
+    --output-dir outputs/flownet_noisy_training/validation_knn \
     --k-neighbors 12 \
     --no-downsample
 ```
@@ -150,10 +178,10 @@ python scripts/3a_validate_knn.py \
 Validates a trained model using graphs derived from mesh cell connectivity.
 ```bash
 python scripts/3b_validate_full_mesh.py \
-    --model-checkpoint outputs/flownet_experiment_run01/models/flownet_best.pth \
+    --model-checkpoint outputs/flownet_noisy_training/models/flownet_best.pth \
     --model-name FlowNet \
     --val-data-dir data/CFD_Ubend_other_val \
-    --output-dir outputs/flownet_experiment_run01/validation_fullmesh
+    --output-dir outputs/flownet_noisy_training/validation_fullmesh
 ```
 *   (Similar arguments to 3a, but without k-NN specific ones.)
 
@@ -162,8 +190,8 @@ Compares two existing sets of VTK data (e.g., ground truth vs. model predictions
 ```bash
 python scripts/4_validate_histograms.py \
     --real-data-dir data/CFD_Ubend_other_val_noisy \
-    --pred-data-dir outputs/flownet_experiment_run01/validation_knn/FlowNet \
-    --output-dir outputs/flownet_experiment_run01/jsd_validation_knn \
+    --pred-data-dir outputs/flownet_noisy_training/validation_knn/FlowNet \
+    --output-dir outputs/flownet_noisy_training/jsd_validation_knn \
     --velocity-key-real U_noisy \
     --velocity-key-pred velocity \
     --model-name-prefix FlowNet_KNN_vs_NoisyReal
@@ -177,10 +205,10 @@ python scripts/4_validate_histograms.py \
 Orchestrates inference (like 3a or 3b) followed by JSD validation (like 4).
 ```bash
 python scripts/5_combined_validation.py \
-    --model-checkpoint outputs/flownet_experiment_run01/models/flownet_best.pth \
+    --model-checkpoint outputs/flownet_noisy_training/models/flownet_best.pth \
     --model-name FlowNet \
     --val-data-dir data/CFD_Ubend_other_val \
-    --output-dir outputs/flownet_experiment_run01/combined_validation_knn_final \
+    --output-dir outputs/flownet_noisy_training/combined_validation_knn_final \
     --graph-type knn \
     --k-neighbors 12
 ```
@@ -198,7 +226,7 @@ python scripts/5_combined_validation.py \
 
 *   More sophisticated data augmentation techniques.
 *   Support for additional GNN architectures.
-*   Hyperparameter optimization scripts.
-*   More detailed post-processing and visualization tools.
+*   Hyperparameter optimization scripts using W&B Sweeps.
+*   More detailed post-processing and visualization tools (e.g., velocity profile plots at key cross-sections, pressure drop calculations).
 *   Integration with workflow management tools (e.g., Snakemake, Nextflow).
 ```

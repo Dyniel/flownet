@@ -193,8 +193,10 @@ def main():
     csv_writer = csv.writer(csv_file)
     csv_header = [
         "epoch", "model_name", "train_loss_total", "train_loss_sup", "train_loss_div", "train_loss_hist",
-        "val_mse", "val_rmse_mag", "val_mse_div", "lr",
-        "sample_rel_tke_err", "sample_cosine_sim" # Optional, from original script
+        "val_mse", "val_rmse_mag", "val_mse_div",
+        "val_mse_x", "val_mse_y", "val_mse_z",
+        "val_mse_vorticity_mag", # New vorticity MSE
+        "lr", "sample_rel_tke_err", "sample_cosine_sim"
     ]
     csv_writer.writerow(csv_header)
     print(f"Logging training metrics to: {csv_log_path}")
@@ -258,12 +260,22 @@ def main():
                 val_graph_cfg.update({"velocity_key": cfg["velocity_key"], "noisy_velocity_key_suffix": cfg["noisy_velocity_key_suffix"]})
                 val_graph_type = val_during_train_cfg.get("val_graph_type", graph_type_train)
 
+                save_fields_vtk_flag = val_during_train_cfg.get("save_validation_fields_vtk", False)
+                log_field_image_idx = val_during_train_cfg.get("log_field_image_sample_idx", 0) # Default to sample 0
+
                 val_metrics = validate_on_pairs(
-                    model, val_pairs_during_train,
+                    model,
+                    val_pairs_during_train,
                     graph_config=val_graph_cfg,
-                    use_noisy_data_for_val=val_use_noisy,
+                    use_noisy_data_for_val=val_use_noisy_for_run,
                     device=device,
-                    graph_type=val_graph_type
+                    graph_type=val_graph_type,
+                    epoch_num=epoch,
+                    output_base_dir=run_output_dir,
+                    save_fields_vtk=save_fields_vtk_flag,
+                    wandb_run=wandb_run, # Pass wandb run object
+                    log_field_image_sample_idx=log_field_image_idx,
+                    model_name=model_name # Pass model_name for W&B log key
                 )
                 log_dict_epoch.update({f"{model_name}/{k}": v for k,v in val_metrics.items()})
 
@@ -339,6 +351,8 @@ def main():
                 epoch, model_name, train_metrics["total"], train_metrics["supervised"],
                 train_metrics["divergence"], train_metrics["histogram"],
                 val_metrics.get("val_mse", -1), val_metrics.get("val_rmse_mag", -1), val_metrics.get("val_mse_div", -1),
+                val_metrics.get("val_mse_x", -1), val_metrics.get("val_mse_y", -1), val_metrics.get("val_mse_z", -1),
+                val_metrics.get("val_mse_vorticity_mag", -1),
                 current_lr, sample_rel_tke_err, sample_cos_sim
             ])
             csv_file.flush() # Ensure data is written

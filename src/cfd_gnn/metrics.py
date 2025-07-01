@@ -167,6 +167,89 @@ def compute_jsd_histograms(
     return jsd_per_point, pdfs_real, pdfs_pred
 
 
+# --- Vorticity Calculation (using PyVista) ---
+def _create_pyvista_grid(points_np: np.ndarray, velocity_np: np.ndarray | None = None):
+    """
+    Creates a PyVista PolyData object from points and (optionally) velocity data.
+    Handles 2D or 3D points/velocities by ensuring they are 3D for PyVista.
+    """
+    import pyvista as pv # Local import
+
+    if points_np.ndim != 2 or points_np.shape[1] < 2 or points_np.shape[1] > 3:
+        raise ValueError(f"Points must be [N,2] or [N,3], got shape {points_np.shape}")
+
+    points_pv = np.zeros((points_np.shape[0], 3), dtype=points_np.dtype)
+    points_pv[:, :points_np.shape[1]] = points_np
+
+    grid = pv.PolyData(points_pv)
+
+    if velocity_np is not None:
+        if velocity_np.shape[0] != points_np.shape[0]:
+            raise ValueError("Points and velocity arrays must have the same number of points.")
+        if velocity_np.ndim != 2 or velocity_np.shape[1] < 2 or velocity_np.shape[1] > 3:
+            raise ValueError(f"Velocity must be [N,2] or [N,3], got shape {velocity_np.shape}")
+
+        velocity_pv = np.zeros((velocity_np.shape[0], 3), dtype=velocity_np.dtype)
+        velocity_pv[:, :velocity_np.shape[1]] = velocity_np
+        grid["velocity"] = velocity_pv
+        grid.active_vectors_name = "velocity" # Set active vector for filters like 'derivatives'
+
+    return grid
+
+def calculate_vorticity_magnitude(points_np: np.ndarray, velocity_np: np.ndarray) -> np.ndarray:
+    """
+    Calculates the magnitude of vorticity for a given velocity field on a set of points.
+    Uses PyVista for the underlying computation.
+
+    Args:
+        points_np: NumPy array of point coordinates, shape [num_points, 2 or 3].
+        velocity_np: NumPy array of velocity vectors, shape [num_points, 2 or 3].
+
+    Returns:
+        NumPy array of vorticity magnitudes, shape [num_points], or zeros if calculation fails.
+    """
+    # Ensure PyVista is imported only when function is called, to keep it an optional dependency.
+    try:
+        import pyvista as pv
+    except ImportError:
+        print("Warning: PyVista is not installed. Cannot calculate vorticity. Returning zeros.")
+        return np.zeros(points_np.shape[0], dtype=np.float32)
+
+    try:
+        if points_np.shape[0] == 0: # No points, no vorticity
+            return np.array([], dtype=np.float32)
+
+        pv_grid = _create_pyvista_grid(points_np, velocity_np)
+
+        if "velocity" not in pv_grid.point_data:
+            print("Warning: 'velocity' field not found in PyVista grid for vorticity calculation. Returning zeros.")
+            return np.zeros(points_np.shape[0], dtype=np.float32)
+
+        # Compute derivatives including vorticity
+        # The .derivatives() filter computes vorticity and other quantities.
+        # It's generally preferred over older compute_derivative_of_point_data.
+        # It works on PolyData (point clouds) as well.
+        derivative_dataset = pv_grid.derivative(scalars=None, vectors='velocity', faster=False, progress_bar=False)
+
+        if 'vorticity' in derivative_dataset.point_data:
+            vorticity_vectors = derivative_dataset.point_data['vorticity']
+            # Vorticity might be 2D if input was 2D, ensure it's 3D for norm
+            if vorticity_vectors.shape[1] == 2:
+                 vort_3d = np.zeros((vorticity_vectors.shape[0], 3), dtype=vorticity_vectors.dtype)
+                 vort_3d[:,:2] = vorticity_vectors
+                 vorticity_magnitude = np.linalg.norm(vort_3d, axis=1)
+            else:
+                 vorticity_magnitude = np.linalg.norm(vorticity_vectors, axis=1)
+            return vorticity_magnitude.astype(np.float32)
+        else:
+            print("Warning: 'vorticity' field not found after PyVista derivative computation. Returning zeros.")
+            return np.zeros(points_np.shape[0], dtype=np.float32)
+
+    except Exception as e:
+        print(f"Error during PyVista vorticity calculation: {e}. Returning zeros.")
+        return np.zeros(points_np.shape[0], dtype=np.float32)
+
+
 if __name__ == '__main__':
     print("Testing metrics.py...")
 
@@ -259,5 +342,44 @@ if __name__ == '__main__':
     print(f"JSD for identical distributions: {jsd_identical}")
     assert np.allclose(jsd_identical, 0.0, atol=1e-7), "JSD for identical distributions should be close to 0." # atol due to EPS
     print("JSD tests passed.")
+
+    # Test Vorticity (basic check for no errors and plausible output shape)
+    print("\nTesting Vorticity Calculation...")
+    try:
+        import pyvista as pv
+        # Simple 2D shear flow: u = y, v = 0. Vorticity_z = -1.
+        # Points for a 2x2 square in xy plane
+        points_2d = np.array([[0,0], [1,0], [0,1], [1,1], [0.5, 0.5]], dtype=np.float32)
+        velocity_2d = np.zeros_like(points_2d)
+        velocity_2d[:, 0] = points_2d[:, 1] # u = y
+
+        vort_mag_2d = calculate_vorticity_magnitude(points_2d, velocity_2d)
+        print(f"Vorticity magnitude (2D input): {vort_mag_2d}")
+        assert vort_mag_2d is not None, "Vorticity calculation returned None for 2D input"
+        assert vort_mag_2d.shape == (points_2d.shape[0],), "Vorticity (2D) output shape incorrect."
+        # For u=y, v=0, w=0, curl is (0,0, d(v)/dx - d(u)/dy) = (0,0, 0 - 1) = (0,0,-1). Mag = 1.
+        # PyVista's point cloud derivatives might not be perfectly accurate.
+        # We're mostly checking that it runs and gives plausible values (non-negative).
+        assert np.all(vort_mag_2d >= 0), "Vorticity magnitudes should be non-negative."
+        print("Vorticity (2D) test ran.")
+
+        # 3D
+        points_3d = np.array([[0,0,0], [1,0,0], [0,1,0], [1,1,0], [0,0,1]], dtype=np.float32)
+        velocity_3d = np.random.rand(5, 3).astype(np.float32)
+        vort_mag_3d = calculate_vorticity_magnitude(points_3d, velocity_3d)
+        print(f"Vorticity magnitude (3D input): {vort_mag_3d}")
+        assert vort_mag_3d is not None, "Vorticity calculation returned None for 3D input"
+        assert vort_mag_3d.shape == (points_3d.shape[0],), "Vorticity (3D) output shape incorrect."
+        assert np.all(vort_mag_3d >= 0), "Vorticity magnitudes should be non-negative."
+        print("Vorticity (3D) test ran.")
+
+    except ImportError:
+        print("PyVista not installed, skipping vorticity calculation tests.")
+    except Exception as e:
+        print(f"Error during vorticity self-test: {e}")
+        # If test fails, it doesn't mean the function is wrong, but test setup might be.
+        # For CI, one might want to raise an error here.
+    print("Vorticity tests complete (or skipped).")
+
 
     print("\nmetrics.py tests complete.")

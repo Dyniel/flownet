@@ -17,7 +17,15 @@ import torch.nn.functional as F # For direct use if needed, though losses module
 
 from .losses import combined_loss, calculate_divergence # Assuming losses.py is in the same package
 from .data_utils import vtk_to_knn_graph # Or a more general graph loader if needed for validation
-from .utils import get_device # For device management
+from .utils import get_device, write_vtk_with_fields # For device management and VTK writing
+from .metrics import calculate_vorticity_magnitude # For vorticity calculation
+from pathlib import Path # For path manipulation
+import numpy as np # For array operations if needed before PyVista
+import matplotlib.pyplot as plt
+from scipy.spatial import Delaunay
+import io
+import wandb
+
 
 def train_single_epoch(
     model: torch.nn.Module,
@@ -97,32 +105,49 @@ def train_single_epoch(
 def validate_on_pairs(
     model: torch.nn.Module,
     val_frame_pairs: list[tuple[Path, Path]], # List of (path_t0, path_t1)
-    graph_config: dict, # For vtk_to_graph (k, downsample_n, keys)
+    graph_config: dict, # For vtk_to_graph (k_neighbors, downsample_n, keys)
     use_noisy_data_for_val: bool, # Whether val data itself is noisy
     device: torch.device,
-    graph_type: str = "knn" # "knn" or "full_mesh" for graph construction
+    graph_type: str = "knn", # "knn" or "full_mesh" for graph construction
+    epoch_num: int = -1, # For naming output files, -1 for non-epoch specific validation
+    output_base_dir: str | Path | None = None, # Base path for saving field VTKs
+    save_fields_vtk: bool = False, # Flag to control saving of VTK files
+    wandb_run: wandb.sdk.wandb_run.Run | None = None, # For logging images
+    log_field_image_sample_idx: int = 0, # Index of the sample in val_frame_pairs to log as an image
+    model_name: str = "Model" # For naming W&B logs
 ) -> dict:
     """
     Validates the model on a set of paired frames from VTK files.
     Computes MSE, RMSE of velocity magnitude, and MSE of divergence.
+    Optionally saves VTK files with true, predicted, and error fields.
 
     Args:
         model: The trained GNN model.
         val_frame_pairs: List of (path_t0, path_t1) tuples for validation.
-        graph_config: Configuration for graph construction (k, downsample_n, velocity_key).
+        graph_config: Configuration for graph construction. Expects 'k_neighbors' if knn.
         use_noisy_data_for_val: If True, loads noisy versions of validation data.
         device: PyTorch device.
         graph_type: Type of graph to construct for validation ("knn" or "full_mesh").
+        epoch_num: Current epoch number, used for naming output directories for VTK fields.
+        output_base_dir: Base directory for saving run outputs, where validation_fields will be created.
+        save_fields_vtk: If True, saves the VTK files with detailed fields.
 
     Returns:
         A dictionary with mean validation metrics: "val_mse", "val_rmse_mag", "val_mse_div".
     """
     model.eval()
-    metrics_list = {"mse": [], "rmse_mag": [], "mse_div": []}
+    metrics_list = {
+        "mse": [], "rmse_mag": [], "mse_div": [],
+        "mse_x": [], "mse_y": [], "mse_z": [], # For component-wise MSE
+        "mse_vorticity_mag": [] # For MSE of vorticity magnitude
+    }
 
     from .data_utils import vtk_to_knn_graph, vtk_to_fullmesh_graph # Local import for clarity
 
-    for path_t0, path_t1 in val_frame_pairs:
+    for i, (path_t0, path_t1) in enumerate(val_frame_pairs):
+        # For extensive VTK saving, one might save only for a subset of pairs, e.g., if i % N == 0
+        # For now, saving for all pairs in the validation set if save_fields_vtk is True.
+
         if graph_type == "knn":
             # Prepare arguments for vtk_to_knn_graph carefully, mapping 'k' from config
             knn_args = {
@@ -160,9 +185,14 @@ def validate_on_pairs(
         predicted_vel_t1 = model(graph_t0)
         true_vel_t1 = graph_t1.x.to(device) # Ensure target is on the same device
 
-        # MSE for velocity vectors
+        # MSE for velocity vectors (overall)
         mse = F.mse_loss(predicted_vel_t1, true_vel_t1).item()
         metrics_list["mse"].append(mse)
+
+        # MSE for each velocity component
+        for component_idx, component_label in enumerate(['x', 'y', 'z']):
+            mse_comp = F.mse_loss(predicted_vel_t1[:, component_idx], true_vel_t1[:, component_idx]).item()
+            metrics_list[f"mse_{component_label}"].append(mse_comp)
 
         # RMSE for velocity magnitudes
         pred_mag = predicted_vel_t1.norm(dim=1)
@@ -181,12 +211,157 @@ def validate_on_pairs(
         mse_div = (div_pred ** 2).mean().item() # Penalize non-zero divergence of prediction
         metrics_list["mse_div"].append(mse_div)
 
-    avg_metrics = {key: float(np.mean(values)) if values else 0.0 for key, values in metrics_list.items()}
-    return {
-        "val_mse": avg_metrics["mse"],
-        "val_rmse_mag": avg_metrics["rmse_mag"],
-        "val_mse_div": avg_metrics["mse_div"]
+        # Save detailed fields to VTK if requested
+        if save_fields_vtk and output_base_dir and graph_t1.pos is not None:
+            try:
+                error_mag = torch.norm(predicted_vel_t1 - true_vel_t1, dim=1)
+
+                # Determine case name and frame name for path construction
+                # Assuming path_t1 is like .../case_name/CFD/frame_name.vtk
+                frame_name_stem = path_t1.stem
+                case_name = path_t1.parent.parent.name
+
+                # Construct output path
+                # Use epoch_num = "final" if it's a final validation after all epochs.
+                epoch_folder_name = f"epoch_{epoch_num}" if epoch_num >= 0 else "final_validation"
+                vtk_output_dir = Path(output_base_dir) / "validation_fields" / epoch_folder_name / case_name
+                vtk_output_dir.mkdir(parents=True, exist_ok=True)
+                vtk_file_path = vtk_output_dir / f"{frame_name_stem}_fields.vtk"
+
+                points_np = graph_t1.pos.cpu().numpy()
+                true_vel_np = true_vel_t1.cpu().numpy()
+                pred_vel_np = predicted_vel_t1.cpu().numpy()
+
+                point_data_for_vtk = {
+                    "true_velocity": true_vel_np,
+                    "predicted_velocity": pred_vel_np,
+                    "velocity_error_magnitude": error_mag.cpu().numpy()
+                }
+
+                # Calculate and add vorticity if points are 3D
+                if points_np.shape[1] == 3:
+                    true_vort_mag = calculate_vorticity_magnitude(points_np, true_vel_np)
+                    pred_vort_mag = calculate_vorticity_magnitude(points_np, pred_vel_np)
+                    if true_vort_mag is not None and pred_vort_mag is not None:
+                        point_data_for_vtk["true_vorticity_magnitude"] = true_vort_mag
+                        point_data_for_vtk["predicted_vorticity_magnitude"] = pred_vort_mag
+
+                        # Calculate MSE for vorticity magnitude
+                        # Ensure they are torch tensors for mse_loss if needed, or use numpy.
+                        # For simplicity, using numpy for mse if arrays are already numpy.
+                        if true_vort_mag.shape == pred_vort_mag.shape: # Basic check
+                            mse_vort_mag = np.mean((true_vort_mag - pred_vort_mag)**2)
+                            metrics_list["mse_vorticity_mag"].append(mse_vort_mag)
+                        else:
+                            print(f"Warning: Shape mismatch for vorticity magnitudes for {path_t1.name}, cannot compute MSE.")
+                    else:
+                         # Append a placeholder if vorticity calculation failed for this frame
+                         metrics_list["mse_vorticity_mag"].append(np.nan) # Or some other indicator like -1
+
+                write_vtk_with_fields(
+                    filepath=str(vtk_file_path),
+                    points=points_np, # Use points from target graph
+                    point_data=point_data_for_vtk
+                )
+            except Exception as e:
+                print(f"Warning: Could not save detailed VTK fields for {path_t1.name}: {e}")
+                # Ensure a placeholder for mse_vorticity_mag if VTK saving fails before its calculation for this frame
+                if "mse_vorticity_mag" not in metrics_list or len(metrics_list["mse_vorticity_mag"]) <= i : # Check if already added for this 'i'
+                    if points_np.shape[1] == 3: # Only append if it was supposed to be calculated
+                        metrics_list["mse_vorticity_mag"].append(np.nan)
+        elif points_np.shape[1] != 3 and "mse_vorticity_mag" not in metrics_list or len(metrics_list["mse_vorticity_mag"]) <=i :
+            # If data is not 3D, vorticity is not calculated, append NaN for consistency if key exists
+             metrics_list.setdefault("mse_vorticity_mag", []).append(np.nan)
+
+
+        # Log field comparison image to W&B for the specified sample index
+        if wandb_run and i == log_field_image_sample_idx and graph_t1.pos is not None:
+            try:
+                true_vel_mag = true_vel_t1.norm(dim=1).cpu().numpy()
+                pred_vel_mag = predicted_vel_t1.norm(dim=1).cpu().numpy()
+                err_mag_np = error_mag.cpu().numpy() # error_mag computed if save_fields_vtk was true or here
+
+                points_plot = graph_t1.pos.cpu().numpy()
+
+                # Create a 2D slice (e.g., points near z=mean(z))
+                if points_plot.shape[1] == 3: # Ensure data is 3D for slicing
+                    mean_z = np.mean(points_plot[:, 2])
+                    slice_indices = np.where(np.abs(points_plot[:, 2] - mean_z) < 0.05 * (np.max(points_plot[:, 2]) - np.min(points_plot[:, 2]) + 1e-6))[0]
+                    if len(slice_indices) < 3: # Not enough points for triangulation
+                        print(f"Warning: Not enough points in slice for sample {i} to generate W&B field image.")
+                        slice_points_2d = points_plot[:, :2] # Fallback to all XY points if slice is too small
+                        slice_true_mag = true_vel_mag
+                        slice_pred_mag = pred_vel_mag
+                        slice_err_mag = err_mag_np
+                    else:
+                        slice_points_2d = points_plot[slice_indices, :2]
+                        slice_true_mag = true_vel_mag[slice_indices]
+                        slice_pred_mag = pred_vel_mag[slice_indices]
+                        slice_err_mag = err_mag_np[slice_indices]
+                else: # Data is already 2D
+                    slice_points_2d = points_plot
+                    slice_true_mag = true_vel_mag
+                    slice_pred_mag = pred_vel_mag
+                    slice_err_mag = err_mag_np
+
+                if len(slice_points_2d) >= 3: # Need at least 3 points for Delaunay/tricontourf
+                    fig, axes = plt.subplots(1, 3, figsize=(18, 5))
+                    fig.suptitle(f"Epoch {epoch_num} - Sample {i} ({path_t1.stem}) - Z-slice comparison", fontsize=16)
+
+                    try:
+                        tri = Delaunay(slice_points_2d)
+
+                        ax = axes[0]
+                        contour1 = ax.tricontourf(slice_points_2d[:,0], slice_points_2d[:,1], tri.simplices, slice_true_mag, levels=14, cmap="jet")
+                        fig.colorbar(contour1, ax=ax)
+                        ax.set_title("True Velocity Magnitude")
+                        ax.set_xlabel("X")
+                        ax.set_ylabel("Y")
+                        ax.axis('equal')
+
+                        ax = axes[1]
+                        contour2 = ax.tricontourf(slice_points_2d[:,0], slice_points_2d[:,1], tri.simplices, slice_pred_mag, levels=14, cmap="jet")
+                        fig.colorbar(contour2, ax=ax)
+                        ax.set_title("Predicted Velocity Magnitude")
+                        ax.set_xlabel("X")
+                        ax.axis('equal')
+
+                        ax = axes[2]
+                        contour3 = ax.tricontourf(slice_points_2d[:,0], slice_points_2d[:,1], tri.simplices, slice_err_mag, levels=14, cmap="Reds")
+                        fig.colorbar(contour3, ax=ax)
+                        ax.set_title("Error Magnitude")
+                        ax.set_xlabel("X")
+                        ax.axis('equal')
+
+                        buf = io.BytesIO()
+                        plt.savefig(buf, format='png')
+                        buf.seek(0)
+                        wandb_run.log({f"{model_name}/Validation_Fields_Epoch{epoch_num}": wandb.Image(buf)})
+                        plt.close(fig)
+                    except Exception as e_plot: # Catch errors during plotting (e.g. if all points collinear for Delaunay)
+                        print(f"Warning: Failed to generate tricontourf plot for sample {i}: {e_plot}")
+                        if 'fig' in locals() and fig is not None: plt.close(fig) # Ensure figure is closed
+                else:
+                    print(f"Warning: Not enough unique points in slice for sample {i} ({len(slice_points_2d)} points) to generate W&B field image with tricontourf.")
+
+            except Exception as e_wandb_img:
+                print(f"Warning: Could not log W&B field image for sample {i}: {e_wandb_img}")
+                if 'fig' in locals() and fig is not None: plt.close(fig) # Ensure figure is closed
+
+
+    avg_metrics = {key: float(np.nanmean(values) if np.any(np.isfinite(values)) else 0.0) for key, values in metrics_list.items()}
+
+    # Ensure all expected keys are present in the return, even if empty (though avg_metrics handles this)
+    return_metrics = {
+        "val_mse": avg_metrics.get("mse", 0.0),
+        "val_rmse_mag": avg_metrics.get("rmse_mag", 0.0),
+        "val_mse_div": avg_metrics.get("mse_div", 0.0),
+        "val_mse_x": avg_metrics.get("mse_x", 0.0),
+        "val_mse_y": avg_metrics.get("mse_y", 0.0),
+        "val_mse_z": avg_metrics.get("mse_z", 0.0),
+        "val_mse_vorticity_mag": avg_metrics.get("mse_vorticity_mag", 0.0)
     }
+    return return_metrics
 
 
 if __name__ == '__main__':
