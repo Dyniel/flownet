@@ -192,10 +192,12 @@ def main():
     csv_file = open(csv_log_path, "w", newline="")
     csv_writer = csv.writer(csv_file)
     csv_header = [
-        "epoch", "model_name", "train_loss_total", "train_loss_sup", "train_loss_div", "train_loss_hist",
-        "val_mse", "val_rmse_mag", "val_mse_div",
+        "epoch", "model_name",
+        "train_loss_total", "train_loss_sup", "train_loss_div", "train_loss_hist", "train_loss_reg",
+        "val_mse", "val_rmse_mag", "val_mse_div", "val_cosine_sim",
         "val_mse_x", "val_mse_y", "val_mse_z",
-        "val_mse_vorticity_mag", # New vorticity MSE
+        "val_mse_vorticity_mag",
+        "val_avg_max_true_vel_mag", "val_avg_max_pred_vel_mag", # Added max velocity metrics
         "lr", "sample_rel_tke_err", "sample_cosine_sim"
     ]
     csv_writer.writerow(csv_header)
@@ -238,7 +240,9 @@ def main():
                 loss_weights=cfg.get("loss_config",{}).get("weights",{}),
                 histogram_bins=cfg.get("loss_config",{}).get("histogram_bins", cfg["nbins"]),
                 device=device,
-                clip_grad_norm_value=cfg.get("clip_grad_norm")
+                clip_grad_norm_value=cfg.get("clip_grad_norm"),
+                regularization_type=cfg.get("regularization_type", "None"),
+                regularization_lambda=cfg.get("regularization_lambda", 0.0)
             )
 
             current_lr = optimizer.param_groups[0]['lr']
@@ -247,6 +251,7 @@ def main():
                 f"{model_name}/train_loss_sup": train_metrics["supervised"],
                 f"{model_name}/train_loss_div": train_metrics["divergence"],
                 f"{model_name}/train_loss_hist": train_metrics["histogram"],
+                f"{model_name}/train_loss_reg": train_metrics["regularization"], # Added regularization loss
                 f"{model_name}/learning_rate": current_lr,
                 "epoch": epoch
             }
@@ -348,11 +353,13 @@ def main():
 
             # Log to CSV
             csv_writer.writerow([
-                epoch, model_name, train_metrics["total"], train_metrics["supervised"],
-                train_metrics["divergence"], train_metrics["histogram"],
-                val_metrics.get("val_mse", -1), val_metrics.get("val_rmse_mag", -1), val_metrics.get("val_mse_div", -1),
+                epoch, model_name,
+                train_metrics["total"], train_metrics["supervised"],
+                train_metrics["divergence"], train_metrics["histogram"], train_metrics["regularization"],
+                val_metrics.get("val_mse", -1), val_metrics.get("val_rmse_mag", -1), val_metrics.get("val_mse_div", -1), val_metrics.get("val_cosine_sim", -1),
                 val_metrics.get("val_mse_x", -1), val_metrics.get("val_mse_y", -1), val_metrics.get("val_mse_z", -1),
                 val_metrics.get("val_mse_vorticity_mag", -1),
+                val_metrics.get("val_avg_max_true_vel_mag", -1), val_metrics.get("val_avg_max_pred_vel_mag", -1), # Added max velocity
                 current_lr, sample_rel_tke_err, sample_cos_sim
             ])
             csv_file.flush() # Ensure data is written
