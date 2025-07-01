@@ -210,24 +210,26 @@ def validate_on_pairs(
         mse_div = (div_pred ** 2).mean().item()  # Penalize non-zero divergence of prediction
         metrics_list["mse_div"].append(mse_div)
 
+        # Attempt to get points_np early if pos data is available.
+        points_np = None
+        if graph_t1.pos is not None:
+            points_np = graph_t1.pos.cpu().numpy()
+
+        # Flag to track if mse_vorticity_mag has been added for this item
+        vorticity_metric_added_for_item = False
+
         # Save detailed fields to VTK if requested
-        if save_fields_vtk and output_base_dir and graph_t1.pos is not None:
+        if save_fields_vtk and output_base_dir and points_np is not None: # points_np must exist
             try:
                 error_mag = torch.norm(predicted_vel_t1 - true_vel_t1, dim=1)
-
-                # Determine case name and frame name for path construction
-                # Assuming path_t1 is like .../case_name/CFD/frame_name.vtk
                 frame_name_stem = path_t1.stem
                 case_name = path_t1.parent.parent.name
-
-                # Construct output path
-                # Use epoch_num = "final" if it's a final validation after all epochs.
                 epoch_folder_name = f"epoch_{epoch_num}" if epoch_num >= 0 else "final_validation"
                 vtk_output_dir = Path(output_base_dir) / "validation_fields" / epoch_folder_name / case_name
                 vtk_output_dir.mkdir(parents=True, exist_ok=True)
                 vtk_file_path = vtk_output_dir / f"{frame_name_stem}_fields.vtk"
 
-                points_np = graph_t1.pos.cpu().numpy()
+                # true_vel_np and pred_vel_np are needed for VTK and vorticity
                 true_vel_np = true_vel_t1.cpu().numpy()
                 pred_vel_np = predicted_vel_t1.cpu().numpy()
 
