@@ -2,14 +2,14 @@
 
 # Data roots - these should point to the directories containing your CFD cases
 # e.g., data/CFD_Ubend_other/sUbend_001/CFD/*.vtk
-train_root: 'C:/Program Files/flownet/data/CFD_Ubend_other'
-val_root:   'C:/Program Files/flownet/data/CFD_Ubend_other_val'
+train_root: '/home/student2/ethz/CFD_Ubend_other'
+val_root:   '/home/student2/ethz/CFD_Ubend_other_val'
 
 
 # Noisy data directories (will be created by the data preparation script)
 # These paths are relative to the project root if not absolute.
-noisy_train_root: "C:/Program Files/flownet/data/CFD_Ubend_other_noisy" # Example, script should make this configurable
-noisy_val_root: "C:/Program Files/flownet/data/CFD_Ubend_other_val_noisy"   # Example
+noisy_train_root: "/home/student2/ethz/CFD_Ubend_other_noisy" # Example, script should make this configurable
+noisy_val_root: "/home/student2/ethz/CFD_Ubend_other_val_noisy"   # Example
 
 # Graph construction parameters
 down_n: 2000   # Number of points to downsample to for kNN graphs. Set to 0 or null for no downsampling.
@@ -89,7 +89,7 @@ default_graph_type: "knn"
 # Configuration for graph building, used by data_utils and scripts
 graph_config:
   k: 12 # For kNN
-  down_n: null # For kNN, null or 0 means no downsampling
+  down_n: 20000 # For kNN, null or 0 means no downsampling
   # velocity_key, noisy_velocity_key_suffix, pressure_key are taken from top-level config
   # For full_mesh, k and down_n are ignored by vtk_to_fullmesh_graph
 

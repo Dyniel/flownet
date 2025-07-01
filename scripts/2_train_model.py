@@ -88,6 +88,10 @@ def main():
     parser.add_argument(
         "--skip-hist-val-after-train", action="store_true", help="Skip histogram JSD validation after training."
     )
+    parser.add_argument(
+        "--data-source", type=str, default="noisy", choices=["noisy", "clean"],
+        help="Specify whether to use 'noisy' or 'clean' dataset for training and primary validation. Default: noisy."
+    )
 
     args = parser.parse_args()
 
@@ -135,24 +139,42 @@ def main():
     print(f"Outputs will be saved to: {run_output_dir}")
 
     # --- 3. Data Preparation ---
-    # Training data is typically the noisy dataset
-    train_data_path = Path(cfg["noisy_train_root"])
-    # Validation data for during-training checks (can be noisy or clean)
+    if args.data_source == "clean":
+        train_data_path_to_use = Path(cfg["train_root"])
+        train_use_noisy_flag = False
+        print("Using CLEAN dataset for training.")
+    else: # Default is "noisy"
+        train_data_path_to_use = Path(cfg["noisy_train_root"])
+        train_use_noisy_flag = True
+        print("Using NOISY dataset for training.")
+
+    # Validation data for during-training checks - also respects --data-source by default
     val_during_train_cfg = cfg.get("validation_during_training", {})
-    val_use_noisy = val_during_train_cfg.get("use_noisy_data", True)
-    val_data_path = Path(cfg["noisy_val_root"] if val_use_noisy else cfg["val_root"])
+    # If --data-source is clean, validation should also be clean by default.
+    # Allow override from val_during_train_cfg if specific advanced control is needed,
+    # but primary driver is args.data_source.
+    default_val_use_noisy = train_use_noisy_flag # Match training source by default
+    val_use_noisy_for_run = val_during_train_cfg.get("use_noisy_data", default_val_use_noisy)
 
-    print(f"Loading training data from: {train_data_path}")
-    print(f"Loading validation data (during training) from: {val_data_path}")
+    if val_use_noisy_for_run:
+        val_data_path_to_use = Path(cfg["noisy_val_root"])
+        print("Using NOISY dataset for validation during training.")
+    else:
+        val_data_path_to_use = Path(cfg["val_root"])
+        print("Using CLEAN dataset for validation during training.")
 
-    train_pairs = make_frame_pairs(train_data_path)
-    val_pairs_during_train = make_frame_pairs(val_data_path)
+
+    print(f"Loading training data from: {train_data_path_to_use}")
+    print(f"Loading validation data (during training) from: {val_data_path_to_use}")
+
+    train_pairs = make_frame_pairs(train_data_path_to_use)
+    val_pairs_during_train = make_frame_pairs(val_data_path_to_use)
 
     if not train_pairs:
-        print(f"Error: No training frame pairs found in {train_data_path}. Exiting.")
+        print(f"Error: No training frame pairs found in {train_data_path_to_use}. Exiting.")
         sys.exit(1)
     if not val_pairs_during_train and val_during_train_cfg.get("enabled", True):
-        print(f"Warning: No validation frame pairs found in {val_data_path} for during-training validation.")
+        print(f"Warning: No validation frame pairs found in {val_data_path_to_use} for during-training validation.")
         # Allow continuation if validation is optional or handled differently
 
     graph_build_config_train = {**cfg.get("graph_config",{}), "velocity_key": cfg["velocity_key"], "noisy_velocity_key_suffix": cfg["noisy_velocity_key_suffix"]}
@@ -160,7 +182,7 @@ def main():
 
     train_dataset = PairedFrameDataset(
         train_pairs, graph_build_config_train, graph_type=graph_type_train,
-        use_noisy_data=True, # Training always on noisy data as per original logic
+        use_noisy_data=train_use_noisy_flag, # Controlled by --data-source
         device=device # Graphs will be moved to device upon getitem
     )
     train_loader = PyGDataLoader(train_dataset, batch_size=cfg["batch_size"], shuffle=True, num_workers=cfg.get("num_workers",0))
@@ -171,8 +193,10 @@ def main():
     csv_writer = csv.writer(csv_file)
     csv_header = [
         "epoch", "model_name", "train_loss_total", "train_loss_sup", "train_loss_div", "train_loss_hist",
-        "val_mse", "val_rmse_mag", "val_mse_div", "lr",
-        "sample_rel_tke_err", "sample_cosine_sim" # Optional, from original script
+        "val_mse", "val_rmse_mag", "val_mse_div",
+        "val_mse_x", "val_mse_y", "val_mse_z",
+        "val_mse_vorticity_mag", # New vorticity MSE
+        "lr", "sample_rel_tke_err", "sample_cosine_sim"
     ]
     csv_writer.writerow(csv_header)
     print(f"Logging training metrics to: {csv_log_path}")
@@ -236,12 +260,22 @@ def main():
                 val_graph_cfg.update({"velocity_key": cfg["velocity_key"], "noisy_velocity_key_suffix": cfg["noisy_velocity_key_suffix"]})
                 val_graph_type = val_during_train_cfg.get("val_graph_type", graph_type_train)
 
+                save_fields_vtk_flag = val_during_train_cfg.get("save_validation_fields_vtk", False)
+                log_field_image_idx = val_during_train_cfg.get("log_field_image_sample_idx", 0) # Default to sample 0
+
                 val_metrics = validate_on_pairs(
-                    model, val_pairs_during_train,
+                    model,
+                    val_pairs_during_train,
                     graph_config=val_graph_cfg,
-                    use_noisy_data_for_val=val_use_noisy,
+                    use_noisy_data_for_val=val_use_noisy_for_run,
                     device=device,
-                    graph_type=val_graph_type
+                    graph_type=val_graph_type,
+                    epoch_num=epoch,
+                    output_base_dir=run_output_dir,
+                    save_fields_vtk=save_fields_vtk_flag,
+                    wandb_run=wandb_run, # Pass wandb run object
+                    log_field_image_sample_idx=log_field_image_idx,
+                    model_name=model_name # Pass model_name for W&B log key
                 )
                 log_dict_epoch.update({f"{model_name}/{k}": v for k,v in val_metrics.items()})
 
@@ -269,11 +303,24 @@ def main():
                     sample_graph_type = val_during_train_cfg.get("val_graph_type", graph_type_train)
 
                     if sample_graph_type == "knn":
-                         g0_sample = vtk_to_knn_graph(sample_path_t0, **sample_graph_cfg, use_noisy_data=val_use_noisy, device=device)
-                         g1_sample = vtk_to_knn_graph(sample_path_t1, **sample_graph_cfg, use_noisy_data=val_use_noisy, device=device)
+                         # Prepare arguments for vtk_to_knn_graph carefully
+                         knn_args_sample = {
+                             "k_neighbors": sample_graph_cfg["k"],  # Map 'k'
+                             "downsample_n": sample_graph_cfg.get("down_n"),
+                             "velocity_key": sample_graph_cfg.get("velocity_key", "U"),
+                             "noisy_velocity_key_suffix": sample_graph_cfg.get("noisy_velocity_key_suffix", "_noisy"),
+                         }
+                         g0_sample = vtk_to_knn_graph(sample_path_t0, **knn_args_sample, use_noisy_data=val_use_noisy_for_run, device=device)
+                         g1_sample = vtk_to_knn_graph(sample_path_t1, **knn_args_sample, use_noisy_data=val_use_noisy_for_run, device=device)
                     else: # full_mesh
-                         g0_sample = vtk_to_fullmesh_graph(sample_path_t0, velocity_key=sample_graph_cfg["velocity_key"], pressure_key=cfg["pressure_key"], device=device)
-                         g1_sample = vtk_to_fullmesh_graph(sample_path_t1, velocity_key=sample_graph_cfg["velocity_key"], pressure_key=cfg["pressure_key"], device=device)
+                         # For full_mesh, use_noisy_data is not directly passed to vtk_to_fullmesh_graph
+                         # as it reads specific keys. The sample_graph_cfg already has velocity_key which might be noisy.
+                         # However, if we want to be explicit, we'd need to adjust how velocity_key is chosen for full_mesh here
+                         # based on val_use_noisy_for_run. For now, full_mesh relies on the pre-set velocity_key in sample_graph_cfg.
+                         # This part might need refinement if full_mesh also needs explicit clean/noisy switching logic here.
+                         # Assuming velocity_key in sample_graph_cfg is already correctly "U" or "U_noisy" based on higher level logic if applicable.
+                         g0_sample = vtk_to_fullmesh_graph(sample_path_t0, velocity_key=sample_graph_cfg.get("velocity_key", "U"), pressure_key=cfg.get("pressure_key", "p"), device=device)
+                         g1_sample = vtk_to_fullmesh_graph(sample_path_t1, velocity_key=sample_graph_cfg.get("velocity_key", "U"), pressure_key=cfg.get("pressure_key", "p"), device=device)
 
                     with torch.no_grad(): pred_sample = model(g0_sample).cpu()
                     real_sample = g1_sample.x.cpu() # True velocity from the target frame
@@ -304,6 +351,8 @@ def main():
                 epoch, model_name, train_metrics["total"], train_metrics["supervised"],
                 train_metrics["divergence"], train_metrics["histogram"],
                 val_metrics.get("val_mse", -1), val_metrics.get("val_rmse_mag", -1), val_metrics.get("val_mse_div", -1),
+                val_metrics.get("val_mse_x", -1), val_metrics.get("val_mse_y", -1), val_metrics.get("val_mse_z", -1),
+                val_metrics.get("val_mse_vorticity_mag", -1),
                 current_lr, sample_rel_tke_err, sample_cos_sim
             ])
             csv_file.flush() # Ensure data is written
@@ -333,10 +382,22 @@ def main():
             jsd_ref_data_root = Path(hist_val_after_train_cfg.get("reference_data_root", cfg["noisy_val_root"]))
 
             # Graph config for on-the-fly predictions during JSD validation
-            jsd_graph_cfg = {**cfg.get("graph_config",{}), **hist_val_after_train_cfg.get("graph_config_val",{})}
-            jsd_graph_cfg.update({"velocity_key": cfg["velocity_key"], "noisy_velocity_key_suffix": cfg["noisy_velocity_key_suffix"]})
-            # Model expects input based on how it was trained (e.g. "U_noisy" if use_noisy_data was true for graph creation)
-            jsd_graph_cfg["use_noisy_data"] = True # Assume model input is noisy data for prediction
+            base_graph_cfg_jsd = {**cfg.get("graph_config",{}), **hist_val_after_train_cfg.get("graph_config_val",{})}
+            jsd_graph_cfg = {
+                "k_neighbors": base_graph_cfg_jsd["k"], # Map k to k_neighbors
+                "downsample_n": base_graph_cfg_jsd.get("down_n"),
+                "velocity_key": cfg.get("velocity_key", "U"), # Ensure default
+                "noisy_velocity_key_suffix": cfg.get("noisy_velocity_key_suffix", "_noisy"), # Ensure default
+                # This 'use_noisy_data' determines if graph_input uses noisy features from vtk_path_ref.
+                # Default to True, assuming model was trained on noisy inputs.
+                "use_noisy_data": True
+            }
+            # Allow override from specific JSD validation graph config if provided
+            if "use_noisy_data" in hist_val_after_train_cfg.get("graph_config_val", {}):
+                jsd_graph_cfg["use_noisy_data"] = hist_val_after_train_cfg["graph_config_val"]["use_noisy_data"]
+            if "velocity_key" in hist_val_after_train_cfg.get("graph_config_val", {}): # Allow override for input key
+                 jsd_graph_cfg["velocity_key"] = hist_val_after_train_cfg["graph_config_val"]["velocity_key"]
+
 
             jsd_graph_type = hist_val_after_train_cfg.get("graph_type_val", graph_type_train)
 

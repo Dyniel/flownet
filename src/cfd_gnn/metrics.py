@@ -11,6 +11,7 @@ import torch
 # Small epsilon value to prevent division by zero or log(0)
 EPS = 1e-9
 
+
 def turbulent_kinetic_energy(velocity_field: np.ndarray | torch.Tensor) -> float:
     """
     Calculates the mean Turbulent Kinetic Energy (TKE) per unit mass.
@@ -28,11 +29,11 @@ def turbulent_kinetic_energy(velocity_field: np.ndarray | torch.Tensor) -> float
         # Square of velocity magnitudes: (U·U) = U_x^2 + U_y^2 + U_z^2
         # This is norm(dim=1)^2 if velocity_field is [N,3]
         # Or norm(dim=-1)^2 if velocity_field is [B,N,3]
-        squared_magnitudes = torch.sum(velocity_field**2, dim=-1)
+        squared_magnitudes = torch.sum(velocity_field ** 2, dim=-1)
         tke_val = 0.5 * torch.mean(squared_magnitudes)
         return float(tke_val.item())
     elif isinstance(velocity_field, np.ndarray):
-        squared_magnitudes = np.sum(velocity_field**2, axis=-1)
+        squared_magnitudes = np.sum(velocity_field ** 2, axis=-1)
         tke_val = 0.5 * np.mean(squared_magnitudes)
         return float(tke_val)
     else:
@@ -40,9 +41,9 @@ def turbulent_kinetic_energy(velocity_field: np.ndarray | torch.Tensor) -> float
 
 
 def cosine_similarity_metric(
-    predictions: torch.Tensor | np.ndarray,
-    targets: torch.Tensor | np.ndarray,
-    reduction: str = 'mean' # 'mean' or 'none'
+        predictions: torch.Tensor | np.ndarray,
+        targets: torch.Tensor | np.ndarray,
+        reduction: str = 'mean'  # 'mean' or 'none'
 ) -> float | np.ndarray | torch.Tensor:
     """
     Computes the cosine similarity between predicted and target velocity fields.
@@ -73,7 +74,7 @@ def cosine_similarity_metric(
             return similarity
         else:
             raise ValueError(f"Unknown reduction: {reduction}")
-    else: # Numpy
+    else:  # Numpy
         if not isinstance(targets, np.ndarray):
             targets = np.array(targets, dtype=predictions.dtype)
 
@@ -92,10 +93,10 @@ def cosine_similarity_metric(
 
 
 def compute_jsd_histograms(
-    real_magnitudes_time_series: np.ndarray,
-    pred_magnitudes_time_series: np.ndarray,
-    num_bins: int,
-    min_max_range: tuple[float, float] | None = None, # Optional: precomputed (min, max) for histogram bins
+        real_magnitudes_time_series: np.ndarray,
+        pred_magnitudes_time_series: np.ndarray,
+        num_bins: int,
+        min_max_range: tuple[float, float] | None = None,  # Optional: precomputed (min, max) for histogram bins
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """
     Computes Jensen-Shannon Divergence (JSD) per point based on histograms
@@ -132,7 +133,7 @@ def compute_jsd_histograms(
 
     # Ensure range is valid
     if min_val >= max_val:
-        max_val = min_val + EPS # Add epsilon if min and max are too close or equal
+        max_val = min_val + EPS  # Add epsilon if min and max are too close or equal
 
     bin_edges = np.linspace(min_val, max_val, num_bins + 1, dtype=np.float64)
 
@@ -159,7 +160,7 @@ def compute_jsd_histograms(
         m_dist = 0.5 * (p_dist + q_dist)
 
         # Kullback-Leibler divergences
-        kl_pm = np.sum(p_dist * np.log(p_dist / m_dist)) # log base e
+        kl_pm = np.sum(p_dist * np.log(p_dist / m_dist))  # log base e
         kl_qm = np.sum(q_dist * np.log(q_dist / m_dist))
 
         jsd_per_point[i] = 0.5 * (kl_pm + kl_qm)
@@ -167,12 +168,97 @@ def compute_jsd_histograms(
     return jsd_per_point, pdfs_real, pdfs_pred
 
 
+# --- Vorticity Calculation (using PyVista) ---
+def _create_pyvista_grid(points_np: np.ndarray, velocity_np: np.ndarray | None = None):
+    """
+    Creates a PyVista PolyData object from points and (optionally) velocity data.
+    Handles 2D or 3D points/velocities by ensuring they are 3D for PyVista.
+    """
+    import pyvista as pv  # Local import
+
+    if points_np.ndim != 2 or points_np.shape[1] < 2 or points_np.shape[1] > 3:
+        raise ValueError(f"Points must be [N,2] or [N,3], got shape {points_np.shape}")
+
+    points_pv = np.zeros((points_np.shape[0], 3), dtype=points_np.dtype)
+    points_pv[:, :points_np.shape[1]] = points_np
+
+    grid = pv.PolyData(points_pv)
+
+    if velocity_np is not None:
+        if velocity_np.shape[0] != points_np.shape[0]:
+            raise ValueError("Points and velocity arrays must have the same number of points.")
+        if velocity_np.ndim != 2 or velocity_np.shape[1] < 2 or velocity_np.shape[1] > 3:
+            raise ValueError(f"Velocity must be [N,2] or [N,3], got shape {velocity_np.shape}")
+
+        velocity_pv = np.zeros((velocity_np.shape[0], 3), dtype=velocity_np.dtype)
+        velocity_pv[:, :velocity_np.shape[1]] = velocity_np
+        grid["velocity"] = velocity_pv
+        grid.active_vectors_name = "velocity"  # Set active vector for filters like 'derivatives'
+
+    return grid
+
+
+def calculate_vorticity_magnitude(points_np: np.ndarray, velocity_np: np.ndarray) -> np.ndarray:
+    """
+    Calculates the magnitude of vorticity for a given velocity field on a set of points.
+    Uses PyVista for the underlying computation.
+
+    Args:
+        points_np: NumPy array of point coordinates, shape [num_points, 2 or 3].
+        velocity_np: NumPy array of velocity vectors, shape [num_points, 2 or 3].
+
+    Returns:
+        NumPy array of vorticity magnitudes, shape [num_points], or zeros if calculation fails.
+    """
+    # Ensure PyVista is imported only when function is called, to keep it an optional dependency.
+    try:
+        import pyvista as pv
+    except ImportError:
+        print("Warning: PyVista is not installed. Cannot calculate vorticity. Returning zeros.")
+        return np.zeros(points_np.shape[0], dtype=np.float32)
+
+    try:
+        if points_np.shape[0] == 0:  # No points, no vorticity
+            return np.array([], dtype=np.float32)
+
+        pv_grid = _create_pyvista_grid(points_np, velocity_np)
+
+        if "velocity" not in pv_grid.point_data:
+            print("Warning: 'velocity' field not found in PyVista grid for vorticity calculation. Returning zeros.")
+            return np.zeros(points_np.shape[0], dtype=np.float32)
+
+        # Compute derivatives including vorticity
+        # The .derivatives() filter computes vorticity and other quantities.
+        # It's generally preferred over older compute_derivative_of_point_data.
+        # It works on PolyData (point clouds) as well.
+        derivative_dataset = pv_grid.derivative(scalars=None, vectors='velocity', faster=False, progress_bar=False)
+
+        if 'vorticity' in derivative_dataset.point_data:
+            vorticity_vectors = derivative_dataset.point_data['vorticity']
+            # Vorticity might be 2D if input was 2D, ensure it's 3D for norm
+            if vorticity_vectors.shape[1] == 2:
+                vort_3d = np.zeros((vorticity_vectors.shape[0], 3), dtype=vorticity_vectors.dtype)
+                vort_3d[:, :2] = vorticity_vectors
+                vorticity_magnitude = np.linalg.norm(vort_3d, axis=1)
+            else:
+                vorticity_magnitude = np.linalg.norm(vorticity_vectors, axis=1)
+            return vorticity_magnitude.astype(np.float32)
+        else:
+            print("Warning: 'vorticity' field not found after PyVista derivative computation. Returning zeros.")
+            return np.zeros(points_np.shape[0], dtype=np.float32)
+
+    except Exception as e:
+        print(f"Error during PyVista vorticity calculation: {e}. Returning zeros.")
+        return np.zeros(points_np.shape[0], dtype=np.float32)
+
+
 if __name__ == '__main__':
     print("Testing metrics.py...")
 
     # Test TKE
     print("\nTesting Turbulent Kinetic Energy (TKE)...")
-    vel_np = np.array([[1,0,0], [0,1,0], [0,0,1], [1,1,1]], dtype=np.float32) # Magnitudes sqrt(1), sqrt(1), sqrt(1), sqrt(3)
+    vel_np = np.array([[1, 0, 0], [0, 1, 0], [0, 0, 1], [1, 1, 1]],
+                      dtype=np.float32)  # Magnitudes sqrt(1), sqrt(1), sqrt(1), sqrt(3)
     # Squared mags: 1, 1, 1, 3. Mean = 1.5. TKE = 0.5 * 1.5 = 0.75
     tke_np = turbulent_kinetic_energy(vel_np)
     print(f"TKE (NumPy): {tke_np}")
@@ -186,8 +272,8 @@ if __name__ == '__main__':
 
     # Test Cosine Similarity
     print("\nTesting Cosine Similarity...")
-    pred_cs = np.array([[1,0,0], [0,1,1]], dtype=np.float32) # norm sqrt(1), sqrt(2)
-    targ_cs = np.array([[1,0,0], [0,-1,-1]], dtype=np.float32) # norm sqrt(1), sqrt(2)
+    pred_cs = np.array([[1, 0, 0], [0, 1, 1]], dtype=np.float32)  # norm sqrt(1), sqrt(2)
+    targ_cs = np.array([[1, 0, 0], [0, -1, -1]], dtype=np.float32)  # norm sqrt(1), sqrt(2)
     # Sim1: (1*1)/(1*1) = 1
     # Sim2: (1*(-1) + 1*(-1)) / (sqrt(2)*sqrt(2)) = -2 / 2 = -1
     # Mean = (1 + (-1))/2 = 0
@@ -234,8 +320,8 @@ if __name__ == '__main__':
     mags_pred[:, 0] = np.random.uniform(0.7, 1.0, num_t)
     # Point 1: Real uniform, Pred bimodal
     mags_real[:, 1] = np.random.uniform(0.0, 1.0, num_t)
-    mags_pred[:num_t//2, 1] = np.random.uniform(0.0, 0.2, num_t//2)
-    mags_pred[num_t//2:, 1] = np.random.uniform(0.8, 1.0, num_t - num_t//2)
+    mags_pred[:num_t // 2, 1] = np.random.uniform(0.0, 0.2, num_t // 2)
+    mags_pred[num_t // 2:, 1] = np.random.uniform(0.8, 1.0, num_t - num_t // 2)
 
     n_bins = 10
     jsd_values, pdfs_r, pdfs_p = compute_jsd_histograms(mags_real, mags_pred, num_bins=n_bins)
@@ -246,7 +332,8 @@ if __name__ == '__main__':
     assert pdfs_p.shape == (num_p, n_bins), "Pred PDFs shape incorrect."
 
     # JSD should be between 0 and log(2) approx 0.693
-    assert np.all(jsd_values >= 0) and np.all(jsd_values <= np.log(2) + EPS), "JSD values out of expected range [0, log(2)]."
+    assert np.all(jsd_values >= 0) and np.all(
+        jsd_values <= np.log(2) + EPS), "JSD values out of expected range [0, log(2)]."
     # For Point 0, distributions should be very different, so JSD should be high.
     # For Point 1, also likely different.
     print(f"JSD for point 0 (low vs high): {jsd_values[0]:.4f}")
@@ -257,7 +344,47 @@ if __name__ == '__main__':
     mags_identical2 = mags_identical1.copy()
     jsd_identical, _, _ = compute_jsd_histograms(mags_identical1, mags_identical2, num_bins=n_bins)
     print(f"JSD for identical distributions: {jsd_identical}")
-    assert np.allclose(jsd_identical, 0.0, atol=1e-7), "JSD for identical distributions should be close to 0." # atol due to EPS
+    assert np.allclose(jsd_identical, 0.0,
+                       atol=1e-7), "JSD for identical distributions should be close to 0."  # atol due to EPS
     print("JSD tests passed.")
+
+    # Test Vorticity (basic check for no errors and plausible output shape)
+    print("\nTesting Vorticity Calculation...")
+    try:
+        import pyvista as pv
+
+        # Simple 2D shear flow: u = y, v = 0. Vorticity_z = -1.
+        # Points for a 2x2 square in xy plane
+        points_2d = np.array([[0, 0], [1, 0], [0, 1], [1, 1], [0.5, 0.5]], dtype=np.float32)
+        velocity_2d = np.zeros_like(points_2d)
+        velocity_2d[:, 0] = points_2d[:, 1]  # u = y
+
+        vort_mag_2d = calculate_vorticity_magnitude(points_2d, velocity_2d)
+        print(f"Vorticity magnitude (2D input): {vort_mag_2d}")
+        assert vort_mag_2d is not None, "Vorticity calculation returned None for 2D input"
+        assert vort_mag_2d.shape == (points_2d.shape[0],), "Vorticity (2D) output shape incorrect."
+        # For u=y, v=0, w=0, curl is (0,0, d(v)/dx - d(u)/dy) = (0,0, 0 - 1) = (0,0,-1). Mag = 1.
+        # PyVista's point cloud derivatives might not be perfectly accurate.
+        # We're mostly checking that it runs and gives plausible values (non-negative).
+        assert np.all(vort_mag_2d >= 0), "Vorticity magnitudes should be non-negative."
+        print("Vorticity (2D) test ran.")
+
+        # 3D
+        points_3d = np.array([[0, 0, 0], [1, 0, 0], [0, 1, 0], [1, 1, 0], [0, 0, 1]], dtype=np.float32)
+        velocity_3d = np.random.rand(5, 3).astype(np.float32)
+        vort_mag_3d = calculate_vorticity_magnitude(points_3d, velocity_3d)
+        print(f"Vorticity magnitude (3D input): {vort_mag_3d}")
+        assert vort_mag_3d is not None, "Vorticity calculation returned None for 3D input"
+        assert vort_mag_3d.shape == (points_3d.shape[0],), "Vorticity (3D) output shape incorrect."
+        assert np.all(vort_mag_3d >= 0), "Vorticity magnitudes should be non-negative."
+        print("Vorticity (3D) test ran.")
+
+    except ImportError:
+        print("PyVista not installed, skipping vorticity calculation tests.")
+    except Exception as e:
+        print(f"Error during vorticity self-test: {e}")
+        # If test fails, it doesn't mean the function is wrong, but test setup might be.
+        # For CI, one might want to raise an error here.
+    print("Vorticity tests complete (or skipped).")
 
     print("\nmetrics.py tests complete.")

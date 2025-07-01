@@ -212,9 +212,11 @@ def histogram_jsd_validation(
             for vtk_path_ref in ref_vtk_files: # Predict for each reference frame
                 if graph_type_val == "knn":
                     # Graph from ref data (can be noisy or clean, depends on what model expects)
+                    # graph_cfg_val should now be correctly prepared by the calling script (2_train_model.py)
+                    # to include 'k_neighbors' and the correct 'use_noisy_data' setting.
                     graph_input = vtk_to_knn_graph(
-                        vtk_path_ref, **graph_cfg_val,
-                        use_noisy_data=graph_cfg_val.get("use_noisy_data", True), # Model usually trained on noisy
+                        vtk_path_ref,
+                        **graph_cfg_val, # This will pass all necessary mapped keys
                         device=device
                     )
                 elif graph_type_val == "full_mesh":
