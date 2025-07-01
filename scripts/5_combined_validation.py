@@ -72,7 +72,46 @@ def run_inference_and_basic_metrics(
     """
     print(f"\n--- Part 1: Inference & Basic Metrics ({args.model_name}, Graph: {args.graph_type}) ---")
     model.eval()
-    all_basic_metrics = {"mse": [], "rmse_mag": [], "mse_div": [], "cosine_sim": []}
+    # This will store lists of metrics, one list per case, each list containing metrics per frame
+    metrics_per_case_then_frame = {
+        "mse": {}, "rmse_mag": {}, "mse_div": {}, "cosine_sim": {},
+        "mse_x": {}, "mse_y": {}, "mse_z": {},
+        "max_true_vel_mag": {}, "max_pred_vel_mag": {} # Added max velocity
+    }
+    # This will store flat lists of metrics from all frames across all cases for global aggregation/histograms
+    all_frames_metrics_flat = {key: [] for key in metrics_per_case_then_frame}
+
+    # Setup CSV for per-frame metrics
+    frame_metrics_csv_path = output_pred_dir.parent / f"frame_metrics_{args.model_name}_{args.graph_type}.csv"
+    # Ensure output_pred_dir.parent exists, it's main_output_dir from main()
+    # output_pred_dir is main_output_dir / "model_predictions"
+
+    detailed_csv_file = open(frame_metrics_csv_path, "w", newline="")
+    detailed_csv_writer = csv.writer(detailed_csv_file)
+    detailed_csv_header = [
+        "case_name", "frame_file", "mse", "rmse_mag", "mse_div", "cosine_sim",
+        "mse_x", "mse_y", "mse_z", "max_true_vel_mag", "max_pred_vel_mag"
+    ]
+    detailed_csv_writer.writerow(detailed_csv_header)
+
+    # Setup CSV for per-frame-slice metrics
+    slice_metrics_csv_path = None
+    slice_csv_writer = None
+    if cfg.get("slice_analysis", {}).get("enabled", False):
+        slice_metrics_csv_path = output_pred_dir.parent / f"frame_slice_metrics_{args.model_name}_{args.graph_type}.csv"
+        slice_csv_file = open(slice_metrics_csv_path, "w", newline="")
+        slice_csv_writer = csv.writer(slice_csv_file)
+        slice_csv_header = [
+            "case_name", "frame_file", "slice_axis", "slice_idx_in_axis",
+            "slice_position", "num_points_in_slice",
+            "max_true_vel_mag", "avg_true_vel_mag", "max_pred_vel_mag", "avg_pred_vel_mag"
+        ]
+        slice_csv_writer.writerow(slice_csv_header)
+        print(f"Logging detailed per-frame-slice metrics to: {slice_metrics_csv_path}")
+        # For W&B aggregation of slice metrics
+        all_slice_metrics_aggregated = {} # Will store lists of values for each type of slice metric
+    print(f"Logging detailed per-frame metrics to: {frame_metrics_csv_path}")
+
 
     if args.cases:
         case_names_to_process = args.cases
@@ -102,6 +141,10 @@ def run_inference_and_basic_metrics(
         }
 
     for case_name in case_names_to_process:
+        # Initialize lists for this case's frame metrics
+        for metric_key in metrics_per_case_then_frame:
+            metrics_per_case_then_frame[metric_key][case_name] = []
+
         case_val_cfd_dir = val_data_dir / case_name / "CFD"
         # Output for this specific case's predictions
         case_pred_output_cfd_dir = output_pred_dir / args.model_name / case_name / "CFD"
@@ -149,10 +192,79 @@ def run_inference_and_basic_metrics(
                 mse_div = (div_pred_torch.cpu() ** 2).mean().item()
                 cos_sim = cosine_similarity_metric(predicted_vel, true_vel.cpu())
 
-                all_basic_metrics["mse"].append(mse)
-                all_basic_metrics["rmse_mag"].append(rmse_mag)
-                all_basic_metrics["mse_div"].append(mse_div)
-                all_basic_metrics["cosine_sim"].append(cos_sim)
+                # Component-wise MSE
+                mse_x = F.mse_loss(predicted_vel[:, 0], true_vel.cpu()[:, 0]).item()
+                mse_y = F.mse_loss(predicted_vel[:, 1], true_vel.cpu()[:, 1]).item()
+                mse_z = F.mse_loss(predicted_vel[:, 2], true_vel.cpu()[:, 2]).item()
+
+                # Max velocity magnitudes
+                max_true_vel_mag = true_vel.cpu().norm(dim=1).max().item()
+                max_pred_vel_mag = predicted_vel.norm(dim=1).max().item()
+
+                # Store metrics for this frame (for this case)
+                metrics_per_case_then_frame["mse"][case_name].append(mse)
+                metrics_per_case_then_frame["rmse_mag"][case_name].append(rmse_mag)
+                metrics_per_case_then_frame["mse_div"][case_name].append(mse_div)
+                metrics_per_case_then_frame["cosine_sim"][case_name].append(cos_sim)
+                metrics_per_case_then_frame["mse_x"][case_name].append(mse_x)
+                metrics_per_case_then_frame["mse_y"][case_name].append(mse_y)
+                metrics_per_case_then_frame["mse_z"][case_name].append(mse_z)
+                metrics_per_case_then_frame["max_true_vel_mag"][case_name].append(max_true_vel_mag)
+                metrics_per_case_then_frame["max_pred_vel_mag"][case_name].append(max_pred_vel_mag)
+
+                # Store for global flat list
+                all_frames_metrics_flat["mse"].append(mse)
+                all_frames_metrics_flat["rmse_mag"].append(rmse_mag)
+                all_frames_metrics_flat["mse_div"].append(mse_div)
+                all_frames_metrics_flat["cosine_sim"].append(cos_sim)
+                all_frames_metrics_flat["mse_x"].append(mse_x)
+                all_frames_metrics_flat["mse_y"].append(mse_y)
+                all_frames_metrics_flat["mse_z"].append(mse_z)
+                all_frames_metrics_flat["max_true_vel_mag"].append(max_true_vel_mag)
+                all_frames_metrics_flat["max_pred_vel_mag"].append(max_pred_vel_mag)
+
+                # Write to detailed CSV
+                detailed_csv_writer.writerow([
+                    case_name, vtk_path.name, mse, rmse_mag, mse_div, cos_sim,
+                    mse_x, mse_y, mse_z, max_true_vel_mag, max_pred_vel_mag
+                ])
+
+                # Calculate and log slice metrics if enabled
+                if slice_csv_writer: # Implies slice_analysis is enabled
+                    from src.cfd_gnn.metrics import calculate_slice_metrics_for_frame # Lazy import
+
+                    slice_metrics_current_frame = calculate_slice_metrics_for_frame(
+                        points_np=graph.pos.cpu().numpy(), # Ensure points_np is from current graph
+                        true_velocity_np=true_vel.cpu().numpy(),
+                        pred_velocity_np=predicted_vel.cpu().numpy(), # Already on CPU
+                        slice_config=cfg.get("slice_analysis")
+                    )
+                    for key, value in slice_metrics_current_frame.items():
+                        # key is like "slice_X_0_pos0.12_max_true_vel_mag"
+                        # We need to parse it to store in CSV and aggregate for W&B
+                        parts = key.split('_') # slice, AXIS, IDX, posXXX, METRIC_NAME, ...
+                        if len(parts) >= 5 and parts[0] == "slice":
+                            s_axis = parts[1]
+                            s_idx = parts[2]
+                            s_pos_str = parts[3].replace("pos","")
+                            s_metric_name = "_".join(parts[4:]) # e.g. max_true_vel_mag
+
+                            # For CSV
+                            if s_metric_name == "max_true_vel_mag": # Write one row per slice definition
+                                slice_csv_writer.writerow([
+                                    case_name, vtk_path.name, s_axis, s_idx, float(s_pos_str),
+                                    slice_metrics_current_frame.get(f"slice_{s_axis}_{s_idx}_pos{float(s_pos_str):.2f}_num_points", 0),
+                                    slice_metrics_current_frame.get(f"slice_{s_axis}_{s_idx}_pos{float(s_pos_str):.2f}_max_true_vel_mag", np.nan),
+                                    slice_metrics_current_frame.get(f"slice_{s_axis}_{s_idx}_pos{float(s_pos_str):.2f}_avg_true_vel_mag", np.nan),
+                                    slice_metrics_current_frame.get(f"slice_{s_axis}_{s_idx}_pos{float(s_pos_str):.2f}_max_pred_vel_mag", np.nan),
+                                    slice_metrics_current_frame.get(f"slice_{s_axis}_{s_idx}_pos{float(s_pos_str):.2f}_avg_pred_vel_mag", np.nan),
+                                ])
+
+                            # For W&B aggregation (overall average for this type of slice_metric)
+                            # e.g. "slice_X_0_max_pred_vel_mag" will average over all frames/cases
+                            agg_key = f"slice_{s_axis}_{s_idx}_{s_metric_name}"
+                            if not np.isnan(value): # Only aggregate valid numbers
+                                all_slice_metrics_aggregated.setdefault(agg_key, []).append(value)
 
                 # Save prediction VTK
                 frame_base_name = vtk_path.stem
@@ -167,20 +279,69 @@ def run_inference_and_basic_metrics(
                 # import traceback; traceback.print_exc() # For debugging
                 continue
 
-    # Aggregate and log basic metrics
-    summary_basic_metrics = {}
-    print(f"\n  Summary of Basic Metrics ({args.model_name}, Graph: {args.graph_type}):")
-    for name, values in all_basic_metrics.items():
-        if values:
-            mean_val, std_val = float(np.mean(values)), float(np.std(values))
-            summary_basic_metrics[f"Basic/{args.model_name}/{name}_mean"] = mean_val
-            summary_basic_metrics[f"Basic/{args.model_name}/{name}_std"] = std_val
-            print(f"    Avg {name}: {mean_val:.4e} ± {std_val:.4e}")
+    if slice_csv_writer: # Close slice metrics CSV if it was opened
+        slice_csv_file.close()
 
-    if wandb_run and summary_basic_metrics:
-        wandb_run.log(summary_basic_metrics)
+    detailed_csv_file.close() # Close the detailed CSV
 
-    return summary_basic_metrics
+    # --- Aggregate and Log Metrics ---
+    # 1. Overall metrics (mean and std over all frames from all cases)
+    summary_overall_metrics = {}
+    print(f"\n  Overall Summary Metrics ({args.model_name}, Graph: {args.graph_type}, All Cases & Frames):")
+    for metric_name, flat_values_list in all_frames_metrics_flat.items():
+        if flat_values_list:
+            mean_val = float(np.mean(flat_values_list))
+            std_val = float(np.std(flat_values_list))
+            summary_overall_metrics[f"Overall/{args.model_name}/{metric_name}_mean"] = mean_val
+            summary_overall_metrics[f"Overall/{args.model_name}/{metric_name}_std"] = std_val
+            print(f"    Avg {metric_name}: {mean_val:.4e} ± {std_val:.4e} (n={len(flat_values_list)})")
+            if wandb_run: # Log histogram of all frame values for this metric
+                 wandb_run.log({f"Histograms_All_Frames/{args.model_name}/{metric_name}": wandb.Histogram(np.array(flat_values_list))})
+
+    # 2. Per-case summary metrics (mean and std over frames within each case)
+    summary_per_case_metrics = {}
+    print(f"\n  Per-Case Summary Metrics ({args.model_name}, Graph: {args.graph_type}):")
+    for case_name_processed in case_names_to_process:
+        print(f"    Case: {case_name_processed}")
+        for metric_name, case_metric_data in metrics_per_case_then_frame.items(): # This loops through mse, rmse_mag etc.
+            values_for_case = case_metric_data.get(case_name_processed, [])
+            if values_for_case:
+                mean_val = float(np.mean(values_for_case))
+                std_val = float(np.std(values_for_case))
+                # Log to a dictionary for W&B, namespaced by case
+                summary_per_case_metrics[f"PerCase/{args.model_name}/{case_name_processed}/{metric_name}_mean"] = mean_val
+                summary_per_case_metrics[f"PerCase/{args.model_name}/{case_name_processed}/{metric_name}_std"] = std_val
+                print(f"      Avg {metric_name}: {mean_val:.4e} ± {std_val:.4e} (n={len(values_for_case)})")
+
+    # 3. Aggregated Slice Metrics for W&B
+    summary_slice_metrics_wandb = {}
+    if cfg.get("slice_analysis", {}).get("enabled", False) and all_slice_metrics_aggregated:
+        print(f"\n  Aggregated Slice Metrics ({args.model_name}, Graph: {args.graph_type}):")
+        for agg_key, values_list in all_slice_metrics_aggregated.items():
+            if values_list:
+                mean_val = float(np.mean(values_list))
+                std_val = float(np.std(values_list))
+                # e.g. WandB key: SliceMetrics/FlowNet/slice_X_0_max_pred_vel_mag_mean
+                summary_slice_metrics_wandb[f"SliceMetrics/{args.model_name}/{agg_key}_mean"] = mean_val
+                summary_slice_metrics_wandb[f"SliceMetrics/{args.model_name}/{agg_key}_std"] = std_val
+                print(f"    {agg_key}: Mean={mean_val:.4e}, Std={std_val:.4e} (n={len(values_list)})")
+
+
+    if wandb_run:
+        if summary_overall_metrics:
+            wandb_run.log(summary_overall_metrics)
+        if summary_per_case_metrics:
+            wandb_run.log(summary_per_case_metrics)
+        if summary_slice_metrics_wandb:
+            wandb_run.log(summary_slice_metrics_wandb)
+
+        if slice_metrics_csv_path and slice_metrics_csv_path.exists():
+            art_slice_metrics = wandb.Artifact(f"frame_slice_metrics_{args.model_name}_{args.graph_type}", type="per_frame_slice_metrics")
+            art_slice_metrics.add_file(str(slice_metrics_csv_path))
+            wandb_run.log_artifact(art_slice_metrics)
+
+
+    return summary_overall_metrics # Return overall summary for the main CSV
 
 
 def main():

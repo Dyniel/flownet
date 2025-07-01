@@ -388,3 +388,124 @@ if __name__ == '__main__':
     print("Vorticity tests complete (or skipped).")
 
     print("\nmetrics.py tests complete.")
+
+
+# --- Slice Analysis ---
+
+def get_slice_indices(
+    points: np.ndarray, # Shape [N, 3]
+    axis_idx: int,      # 0 for X, 1 for Y, 2 for Z
+    position: float,    # Coordinate value for the slice center
+    thickness: float    # Thickness of the slice
+) -> np.ndarray:
+    """
+    Returns indices of points that fall within a slice of given thickness centered at position along an axis.
+
+    Args:
+        points: NumPy array of point coordinates, shape [N, 3].
+        axis_idx: Index of the axis to slice along (0 for X, 1 for Y, 2 for Z).
+        position: Coordinate value for the center of the slice.
+        thickness: Total thickness of the slice.
+
+    Returns:
+        NumPy array of indices of points within the slice.
+    """
+    if points.ndim != 2 or points.shape[1] != 3:
+        raise ValueError("Points must be a [N, 3] array.")
+    if not 0 <= axis_idx <= 2:
+        raise ValueError("axis_idx must be 0, 1, or 2.")
+    if thickness < 0:
+        raise ValueError("thickness must be non-negative.")
+
+    half_thickness = thickness / 2.0
+    lower_bound = position - half_thickness
+    upper_bound = position + half_thickness
+
+    point_coords_on_axis = points[:, axis_idx]
+
+    slice_indices = np.where(
+        (point_coords_on_axis >= lower_bound) & (point_coords_on_axis <= upper_bound)
+    )[0]
+
+    return slice_indices.astype(int)
+
+
+def calculate_slice_metrics_for_frame(
+    points_np: np.ndarray,           # Shape [N, 3]
+    true_velocity_np: np.ndarray,    # Shape [N, 3]
+    pred_velocity_np: np.ndarray,    # Shape [N, 3]
+    slice_config: dict               # From global config: e.g. {"axes": ["X", "Y"], "num_per_axis": 3, "thickness_percent": 1.0}
+) -> dict:
+    """
+    Calculates velocity metrics (max_mag, avg_mag) for specified slices of a single frame.
+
+    Args:
+        points_np: NumPy array of point coordinates.
+        true_velocity_np: NumPy array of true velocities.
+        pred_velocity_np: NumPy array of predicted velocities.
+        slice_config: Dictionary containing slice analysis parameters.
+
+    Returns:
+        A dictionary containing metrics per slice.
+        Example: {"slice_X_0_pos_0.12_max_true_vel": 0.5, "slice_X_0_pos_0.12_max_pred_vel": 0.45, ...}
+    """
+    if points_np.shape[0] == 0:
+        return {} # No points, no slices
+
+    results = {}
+    axis_map = {"X": 0, "Y": 1, "Z": 2}
+
+    # Calculate bounding box for determining slice positions and thickness
+    min_coords = points_np.min(axis=0)
+    max_coords = points_np.max(axis=0)
+    bbox_extents = max_coords - min_coords
+
+    for axis_name in slice_config.get("axes", ["X", "Y", "Z"]):
+        axis_idx = axis_map.get(axis_name)
+        if axis_idx is None:
+            print(f"Warning: Invalid axis '{axis_name}' in slice_config. Skipping.")
+            continue
+
+        if bbox_extents[axis_idx] < EPS: # Axis has no extent (e.g. 2D data for Z slice)
+            # print(f"Warning: Bounding box extent for axis {axis_name} is near zero. Skipping slices for this axis.")
+            continue
+
+        num_slices = slice_config.get("num_per_axis", 3)
+        thickness_abs = (slice_config.get("thickness_percent", 1.0) / 100.0) * bbox_extents[axis_idx]
+        if thickness_abs < EPS: # If thickness is effectively zero, make it a small value relative to extent
+            thickness_abs = 0.001 * bbox_extents[axis_idx] if bbox_extents[axis_idx] > EPS else 0.001
+
+
+        # Determine slice positions
+        if num_slices == 1:
+            positions = [min_coords[axis_idx] + 0.5 * bbox_extents[axis_idx]]
+        else:
+            # Positions from (1 / (num_slices+1)) to (num_slices / (num_slices+1)) of extent
+            # e.g., for 3 slices: 0.25, 0.50, 0.75
+            positions = [min_coords[axis_idx] + (i + 1) * (bbox_extents[axis_idx] / (num_slices + 1)) for i in range(num_slices)]
+
+        for i, slice_pos in enumerate(positions):
+            slice_indices = get_slice_indices(points_np, axis_idx, slice_pos, thickness_abs)
+
+            slice_key_prefix = f"slice_{axis_name}_{i}_pos{slice_pos:.2f}"
+
+            if slice_indices.size > 0:
+                true_vel_slice = true_velocity_np[slice_indices]
+                pred_vel_slice = pred_velocity_np[slice_indices]
+
+                true_vel_mag_slice = np.linalg.norm(true_vel_slice, axis=1)
+                pred_vel_mag_slice = np.linalg.norm(pred_vel_slice, axis=1)
+
+                results[f"{slice_key_prefix}_max_true_vel_mag"] = float(true_vel_mag_slice.max())
+                results[f"{slice_key_prefix}_avg_true_vel_mag"] = float(true_vel_mag_slice.mean())
+                results[f"{slice_key_prefix}_max_pred_vel_mag"] = float(pred_vel_mag_slice.max())
+                results[f"{slice_key_prefix}_avg_pred_vel_mag"] = float(pred_vel_mag_slice.mean())
+                results[f"{slice_key_prefix}_num_points"] = len(slice_indices)
+            else:
+                # Log NaN or skip if no points in slice? For now, log NaN for consistency if key expected.
+                results[f"{slice_key_prefix}_max_true_vel_mag"] = np.nan
+                results[f"{slice_key_prefix}_avg_true_vel_mag"] = np.nan
+                results[f"{slice_key_prefix}_max_pred_vel_mag"] = np.nan
+                results[f"{slice_key_prefix}_avg_pred_vel_mag"] = np.nan
+                results[f"{slice_key_prefix}_num_points"] = 0
+    return results

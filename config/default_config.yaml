@@ -27,14 +27,17 @@ layers: 5       # Number of GNN layers.
 
 # Optimization parameters
 lr: 0.0002
-lambda_p: 0.10  # Weight for the physical divergence loss component.
-lambda_h: 0.05  # Weight for the histogram (Wasserstein-1 distance) loss component.
+# lambda_p and lambda_h are now part of loss_config.weights
 nbins: 64       # Number of bins for histogram calculations (loss and JSD).
 epochs: 100     # Total number of training epochs.
 batch_size: 4
 patience: 10    # Patience for early stopping and learning rate scheduler.
 clip_grad_norm: 1.0 # Value for gradient clipping, null or 0 for no clipping.
 seed: 42
+
+# Regularization parameters (L1/L2)
+regularization_type: "None" # Options: "L1", "L2", "None"
+regularization_lambda: 0.0  # Strength of the regularization
 
 # MRI-like noise injection parameters
 p_min: 0.05     # Minimum noise percentage (e.g., 0.05 for 5%).
@@ -122,3 +125,13 @@ histogram_validation_after_training:
   # graph_type_val: from main default_graph_type
   # model_name_prefix will be the current model being trained ("FlowNet" or "Gao")
   nbins_jsd: 64 # nbins for JSD calculation (can be different from loss nbins)
+
+# Configuration for slice-based velocity analysis during validation
+slice_analysis:
+  enabled: true                 # Enable/disable slice analysis
+  axes: ["X", "Y", "Z"]         # Axes along which to take slices
+  num_per_axis: 3               # Number of slices to take per specified axis
+  # Positions will be calculated at 25%, 50%, 75% of the bounding box extent along the axis if num_per_axis is 3.
+  # For num_per_axis = 1, it will be at 50%. For num_per_axis = 2, at 33% and 66%.
+  # Custom positions can be an alternative future feature.
+  thickness_percent: 1.0        # Thickness of the slice as a percentage of the bounding box extent along the slicing axis (e.g., 1.0 for 1%)

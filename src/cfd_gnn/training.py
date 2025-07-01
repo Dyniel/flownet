@@ -34,7 +34,9 @@ def train_single_epoch(
         loss_weights: dict,  # e.g., {"supervised": 1.0, "divergence": 0.1, "histogram": 0.05}
         histogram_bins: int,
         device: torch.device,
-        clip_grad_norm_value: float | None = 1.0
+        clip_grad_norm_value: float | None = 1.0,
+        regularization_type: str = "None", # "L1", "L2", or "None"
+        regularization_lambda: float = 0.0 # Strength of regularization
 ) -> dict:
     """
     Trains the model for a single epoch.
@@ -56,7 +58,8 @@ def train_single_epoch(
         "total": 0.0,
         "supervised": 0.0,
         "divergence": 0.0,
-        "histogram": 0.0
+        "histogram": 0.0,
+        "regularization": 0.0 # Added for L1/L2 regularization loss
     }
     num_batches = 0
 
@@ -80,6 +83,22 @@ def train_single_epoch(
             loss_weights=loss_weights,
             histogram_bins=histogram_bins
         )
+
+        # Add regularization loss if applicable
+        reg_loss = torch.tensor(0.0, device=device)
+        if regularization_type != "None" and regularization_lambda > 0:
+            if regularization_type == "L1":
+                for param in model.parameters():
+                    reg_loss += torch.sum(torch.abs(param))
+            elif regularization_type == "L2":
+                for param in model.parameters():
+                    reg_loss += torch.sum(param.pow(2))
+            else:
+                raise ValueError(f"Unknown regularization_type: {regularization_type}. Supported types are 'L1', 'L2', 'None'.")
+
+            total_loss += regularization_lambda * reg_loss
+            epoch_aggregated_losses["regularization"] += (regularization_lambda * reg_loss).item()
+
 
         total_loss.backward()
 
@@ -138,11 +157,15 @@ def validate_on_pairs(
     model.eval()
     metrics_list = {
         "mse": [], "rmse_mag": [], "mse_div": [],
-        "mse_x": [], "mse_y": [], "mse_z": [],  # For component-wise MSE
-        "mse_vorticity_mag": []  # For MSE of vorticity magnitude
+        "mse_x": [], "mse_y": [], "mse_z": [],
+        "mse_vorticity_mag": [],
+        "cosine_sim": [],
+        "max_true_vel_mag": [], # Max magnitude of true velocity for the frame
+        "max_pred_vel_mag": []  # Max magnitude of predicted velocity for the frame
     }
 
     from .data_utils import vtk_to_knn_graph, vtk_to_fullmesh_graph  # Local import for clarity
+    from .metrics import cosine_similarity_metric # Import cosine similarity
 
     for i, (path_t0, path_t1) in enumerate(val_frame_pairs):
         # For extensive VTK saving, one might save only for a subset of pairs, e.g., if i % N == 0
@@ -209,6 +232,16 @@ def validate_on_pairs(
         # mse_div = F.mse_loss(div_pred, div_true).item()
         mse_div = (div_pred ** 2).mean().item()  # Penalize non-zero divergence of prediction
         metrics_list["mse_div"].append(mse_div)
+
+        # Cosine Similarity
+        cos_sim = cosine_similarity_metric(predicted_vel_t1.cpu(), true_vel_t1.cpu()) # Ensure CPU for numpy based metric
+        metrics_list["cosine_sim"].append(cos_sim)
+
+        # Max velocity magnitudes
+        max_true_vel_mag = true_vel_t1.norm(dim=1).max().item()
+        max_pred_vel_mag = predicted_vel_t1.norm(dim=1).max().item()
+        metrics_list["max_true_vel_mag"].append(max_true_vel_mag)
+        metrics_list["max_pred_vel_mag"].append(max_pred_vel_mag)
 
         # Attempt to get points_np early if pos data is available.
         points_np = None
@@ -375,7 +408,10 @@ def validate_on_pairs(
         "val_mse_x": avg_metrics.get("mse_x", 0.0),
         "val_mse_y": avg_metrics.get("mse_y", 0.0),
         "val_mse_z": avg_metrics.get("mse_z", 0.0),
-        "val_mse_vorticity_mag": avg_metrics.get("mse_vorticity_mag", 0.0)
+        "val_mse_vorticity_mag": avg_metrics.get("mse_vorticity_mag", 0.0),
+        "val_cosine_sim": avg_metrics.get("cosine_sim", 0.0),
+        "val_avg_max_true_vel_mag": avg_metrics.get("max_true_vel_mag", 0.0), # Added avg max true velocity
+        "val_avg_max_pred_vel_mag": avg_metrics.get("max_pred_vel_mag", 0.0)  # Added avg max pred velocity
     }
     return return_metrics
 

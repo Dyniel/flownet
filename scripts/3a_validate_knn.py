@@ -147,7 +147,40 @@ def main():
     print(f"Using device: {device}")
 
     # --- 3. Validation Loop ---
-    all_metrics = {"mse": [], "rmse_mag": [], "mse_div": [], "cosine_sim": []}
+    # Initialize structures for detailed metrics
+    metrics_per_case_then_frame = {
+        "mse": {}, "rmse_mag": {}, "mse_div": {}, "cosine_sim": {},
+        "mse_x": {}, "mse_y": {}, "mse_z": {},
+        "max_true_vel_mag": {}, "max_pred_vel_mag": {} # Added max velocity
+    }
+    all_frames_metrics_flat = {key: [] for key in metrics_per_case_then_frame}
+
+    # Setup CSV for per-frame metrics
+    frame_metrics_csv_path = output_dir / f"frame_metrics_knn_{args.model_name}.csv"
+    detailed_csv_file = open(frame_metrics_csv_path, "w", newline="")
+    detailed_csv_writer = csv.writer(detailed_csv_file)
+    detailed_csv_header = [
+        "case_name", "frame_file", "mse", "rmse_mag", "mse_div", "cosine_sim",
+        "mse_x", "mse_y", "mse_z", "max_true_vel_mag", "max_pred_vel_mag"
+    ]
+    detailed_csv_writer.writerow(detailed_csv_header)
+
+    # Setup CSV for per-frame-slice metrics
+    slice_metrics_csv_path = None
+    slice_csv_writer = None
+    if cfg.get("slice_analysis", {}).get("enabled", False):
+        slice_metrics_csv_path = output_dir / f"frame_slice_metrics_knn_{args.model_name}.csv"
+        slice_csv_file = open(slice_metrics_csv_path, "w", newline="")
+        slice_csv_writer = csv.writer(slice_csv_file)
+        slice_csv_header = [
+            "case_name", "frame_file", "slice_axis", "slice_idx_in_axis",
+            "slice_position", "num_points_in_slice",
+            "max_true_vel_mag", "avg_true_vel_mag", "max_pred_vel_mag", "avg_pred_vel_mag"
+        ]
+        slice_csv_writer.writerow(slice_csv_header)
+        print(f"Logging detailed per-frame-slice metrics to: {slice_metrics_csv_path}")
+        all_slice_metrics_aggregated = {}
+    print(f"Logging detailed per-frame metrics to: {frame_metrics_csv_path}")
 
     # Determine cases to process
     if args.cases:
@@ -175,6 +208,10 @@ def main():
     }
 
     for case_name in case_names_to_process:
+        # Initialize lists for this case's frame metrics
+        for metric_key in metrics_per_case_then_frame:
+            metrics_per_case_then_frame[metric_key][case_name] = []
+
         case_data_dir = val_data_dir / case_name / "CFD"
         case_output_dir = output_dir / args.model_name / case_name / "CFD"
         case_output_dir.mkdir(parents=True, exist_ok=True)
@@ -246,12 +283,74 @@ def main():
 
             cos_sim = cosine_similarity_metric(predicted_vel, true_vel.cpu())
 
-            all_metrics["mse"].append(mse)
-            all_metrics["rmse_mag"].append(rmse_mag)
-            all_metrics["mse_div"].append(mse_div)
-            all_metrics["cosine_sim"].append(cos_sim)
+            # Component-wise MSE
+            mse_x = F.mse_loss(predicted_vel[:, 0], true_vel.cpu()[:, 0]).item()
+            mse_y = F.mse_loss(predicted_vel[:, 1], true_vel.cpu()[:, 1]).item()
+            mse_z = F.mse_loss(predicted_vel[:, 2], true_vel.cpu()[:, 2]).item()
+
+            # Max velocity magnitudes
+            max_true_vel_mag = true_vel.cpu().norm(dim=1).max().item()
+            max_pred_vel_mag = predicted_vel.norm(dim=1).max().item()
+
+            # Store metrics for this frame (for this case)
+            metrics_per_case_then_frame["mse"][case_name].append(mse)
+            metrics_per_case_then_frame["rmse_mag"][case_name].append(rmse_mag)
+            metrics_per_case_then_frame["mse_div"][case_name].append(mse_div)
+            metrics_per_case_then_frame["cosine_sim"][case_name].append(cos_sim)
+            metrics_per_case_then_frame["mse_x"][case_name].append(mse_x)
+            metrics_per_case_then_frame["mse_y"][case_name].append(mse_y)
+            metrics_per_case_then_frame["mse_z"][case_name].append(mse_z)
+            metrics_per_case_then_frame["max_true_vel_mag"][case_name].append(max_true_vel_mag)
+            metrics_per_case_then_frame["max_pred_vel_mag"][case_name].append(max_pred_vel_mag)
+
+            # Store for global flat list
+            all_frames_metrics_flat["mse"].append(mse)
+            all_frames_metrics_flat["rmse_mag"].append(rmse_mag)
+            all_frames_metrics_flat["mse_div"].append(mse_div)
+            all_frames_metrics_flat["cosine_sim"].append(cos_sim)
+            all_frames_metrics_flat["mse_x"].append(mse_x)
+            all_frames_metrics_flat["mse_y"].append(mse_y)
+            all_frames_metrics_flat["mse_z"].append(mse_z)
+            all_frames_metrics_flat["max_true_vel_mag"].append(max_true_vel_mag)
+            all_frames_metrics_flat["max_pred_vel_mag"].append(max_pred_vel_mag)
 
             print(f"    Metrics: MSE={mse:.4e}, RMSE_mag={rmse_mag:.4e}, MSE_div={mse_div:.4e}, CosSim={cos_sim:.4f}")
+
+            # Write to detailed CSV
+            detailed_csv_writer.writerow([
+                case_name, vtk_path.name, mse, rmse_mag, mse_div, cos_sim,
+                mse_x, mse_y, mse_z, max_true_vel_mag, max_pred_vel_mag
+            ])
+
+            # Calculate and log slice metrics if enabled
+            if slice_csv_writer: # Implies slice_analysis is enabled
+                from src.cfd_gnn.metrics import calculate_slice_metrics_for_frame # Lazy import
+
+                slice_metrics_current_frame = calculate_slice_metrics_for_frame(
+                    points_np=graph.pos.cpu().numpy(),
+                    true_velocity_np=true_vel.cpu().numpy(),
+                    pred_velocity_np=predicted_vel.cpu().numpy(),
+                    slice_config=cfg.get("slice_analysis")
+                )
+                for key, value in slice_metrics_current_frame.items():
+                    parts = key.split('_')
+                    if len(parts) >= 5 and parts[0] == "slice":
+                        s_axis, s_idx, s_pos_str = parts[1], parts[2], parts[3].replace("pos","")
+                        s_metric_name = "_".join(parts[4:])
+
+                        if s_metric_name == "max_true_vel_mag":
+                            slice_csv_writer.writerow([
+                                case_name, vtk_path.name, s_axis, s_idx, float(s_pos_str),
+                                slice_metrics_current_frame.get(f"slice_{s_axis}_{s_idx}_pos{float(s_pos_str):.2f}_num_points", 0),
+                                slice_metrics_current_frame.get(f"slice_{s_axis}_{s_idx}_pos{float(s_pos_str):.2f}_max_true_vel_mag", np.nan),
+                                slice_metrics_current_frame.get(f"slice_{s_axis}_{s_idx}_pos{float(s_pos_str):.2f}_avg_true_vel_mag", np.nan),
+                                slice_metrics_current_frame.get(f"slice_{s_axis}_{s_idx}_pos{float(s_pos_str):.2f}_max_pred_vel_mag", np.nan),
+                                slice_metrics_current_frame.get(f"slice_{s_axis}_{s_idx}_pos{float(s_pos_str):.2f}_avg_pred_vel_mag", np.nan),
+                            ])
+
+                        agg_key = f"slice_{s_axis}_{s_idx}_{s_metric_name}"
+                        if not np.isnan(value):
+                            all_slice_metrics_aggregated.setdefault(agg_key, []).append(value)
 
             # d. Save predicted VTK
             frame_base_name = vtk_path.stem # e.g., "Frame_00_data"
@@ -268,35 +367,83 @@ def main():
             )
             # print(f"    Saved prediction to: {output_vtk_path}")
 
-    # --- 4. Aggregate and Report Metrics ---
-    print("\n--- Overall Validation Summary ---")
-    avg_metrics_summary = {}
-    for metric_name, values in all_metrics.items():
-        if values:
-            mean_val = float(np.mean(values))
-            std_val = float(np.std(values))
-            avg_metrics_summary[f"{metric_name}_mean"] = mean_val
-            avg_metrics_summary[f"{metric_name}_std"] = std_val
-            print(f"  Avg {metric_name.replace('_', ' '):<10}: {mean_val:.4e} ± {std_val:.4e} (n={len(values)})")
-        else:
-            print(f"  Avg {metric_name.replace('_', ' '):<10}: N/A (no data)")
+    if slice_csv_writer:
+        slice_csv_file.close()
+    detailed_csv_file.close()
 
-    # Save summary metrics to a CSV file
+    # --- 4. Aggregate and Report Metrics ---
+    # 1. Overall metrics (mean and std over all frames from all cases)
+    summary_overall_metrics = {}
+    print(f"\n--- Overall Validation Summary (k-NN, {args.model_name}, All Cases & Frames) ---")
+    for metric_name, flat_values_list in all_frames_metrics_flat.items():
+        if flat_values_list:
+            mean_val = float(np.mean(flat_values_list))
+            std_val = float(np.std(flat_values_list))
+            summary_overall_metrics[f"Overall_Val_KNN/{args.model_name}/{metric_name}_mean"] = mean_val
+            summary_overall_metrics[f"Overall_Val_KNN/{args.model_name}/{metric_name}_std"] = std_val
+            print(f"  Avg {metric_name}: {mean_val:.4e} ± {std_val:.4e} (n={len(flat_values_list)})")
+            if wandb_run:
+                wandb_run.log({f"Histograms_All_Frames_KNN/{args.model_name}/{metric_name}": wandb.Histogram(np.array(flat_values_list))})
+
+    # 2. Per-case summary metrics
+    summary_per_case_metrics = {}
+    print(f"\n  Per-Case Summary Metrics (k-NN, {args.model_name}):")
+    for case_name_processed in case_names_to_process:
+        print(f"    Case: {case_name_processed}")
+        for metric_name, case_metric_data in metrics_per_case_then_frame.items():
+            values_for_case = case_metric_data.get(case_name_processed, [])
+            if values_for_case:
+                mean_val = float(np.mean(values_for_case))
+                std_val = float(np.std(values_for_case))
+                summary_per_case_metrics[f"PerCase_Val_KNN/{args.model_name}/{case_name_processed}/{metric_name}_mean"] = mean_val
+                summary_per_case_metrics[f"PerCase_Val_KNN/{args.model_name}/{case_name_processed}/{metric_name}_std"] = std_val
+                print(f"      Avg {metric_name}: {mean_val:.4e} ± {std_val:.4e} (n={len(values_for_case)})")
+
+    # 3. Aggregated Slice Metrics for W&B
+    summary_slice_metrics_wandb = {}
+    if cfg.get("slice_analysis", {}).get("enabled", False) and all_slice_metrics_aggregated:
+        print(f"\n  Aggregated Slice Metrics (k-NN, {args.model_name}):")
+        for agg_key, values_list in all_slice_metrics_aggregated.items():
+            if values_list:
+                mean_val = float(np.mean(values_list))
+                std_val = float(np.std(values_list))
+                summary_slice_metrics_wandb[f"SliceMetrics_KNN/{args.model_name}/{agg_key}_mean"] = mean_val
+                summary_slice_metrics_wandb[f"SliceMetrics_KNN/{args.model_name}/{agg_key}_std"] = std_val
+                print(f"    {agg_key}: Mean={mean_val:.4e}, Std={std_val:.4e} (n={len(values_list)})")
+
+    # Save overall summary metrics to a CSV file (consistent with combined_validation)
     summary_csv_path = output_dir / f"validation_summary_knn_{args.model_name}.csv"
     with open(summary_csv_path, "w", newline="") as f:
         writer = csv.writer(f)
-        writer.writerow(["metric", "mean", "std", "count"])
-        for metric_name, values in all_metrics.items():
-            if values:
-                writer.writerow([metric_name, avg_metrics_summary[f"{metric_name}_mean"], avg_metrics_summary[f"{metric_name}_std"], len(values)])
-    print(f"Saved summary metrics to: {summary_csv_path}")
+        writer.writerow(["metric_group", "model", "metric_name", "value_type", "value"])
+        # Log overall metrics
+        for key, val in summary_overall_metrics.items():
+            parts = key.split('/') # e.g., "Overall_Val_KNN/FlowNet/mse_mean"
+            writer.writerow([parts[0], parts[1], parts[2].replace('_mean','').replace('_std',''), parts[2].split('_')[-1], val])
+        # Optionally, log per-case metrics to the same CSV or a different one
+        # For now, keeping main summary CSV for overall metrics only to match combined_validation script.
+
+    print(f"Saved overall summary metrics to: {summary_csv_path}")
 
     if wandb_run:
-        wandb_run.log(avg_metrics_summary)
-        # Could also log the summary CSV as an artifact
-        # art_summary = wandb.Artifact(f"knn_validation_summary_{args.model_name}", type="validation_results")
-        # art_summary.add_file(str(summary_csv_path))
-        # wandb_run.log_artifact(art_summary)
+        if summary_overall_metrics:
+            wandb_run.log(summary_overall_metrics)
+        if summary_per_case_metrics:
+            wandb_run.log(summary_per_case_metrics)
+        if summary_slice_metrics_wandb:
+            wandb_run.log(summary_slice_metrics_wandb)
+
+        # Log the detailed frame metrics CSV as an artifact
+        if frame_metrics_csv_path.exists(): # Check if file was created
+            art_detailed_metrics = wandb.Artifact(f"frame_metrics_knn_{args.model_name}", type="per_frame_metrics")
+            art_detailed_metrics.add_file(str(frame_metrics_csv_path))
+            wandb_run.log_artifact(art_detailed_metrics)
+
+        if slice_metrics_csv_path and slice_metrics_csv_path.exists():
+            art_slice_metrics = wandb.Artifact(f"frame_slice_metrics_knn_{args.model_name}", type="per_frame_slice_metrics")
+            art_slice_metrics.add_file(str(slice_metrics_csv_path))
+            wandb_run.log_artifact(art_slice_metrics)
+
         wandb_run.finish()
 
     print("\nk-NN validation script finished.")

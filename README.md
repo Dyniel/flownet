@@ -32,6 +32,106 @@ This project provides a comprehensive suite for training and validating Graph Ne
 *   **Dependency Update**:
     *   `pyvista` is now used for vorticity calculations. Ensure it is installed in your environment (`pip install pyvista`).
 
+## Project Architecture and Workflow
+
+This project is designed to facilitate the training and evaluation of Graph Neural Networks for CFD predictions. The architecture revolves around a core library (`src/cfd_gnn/`), a set of executable scripts (`scripts/`), and configuration files (`config/`).
+
+### Core Components
+
+*   **`config/`**: Contains YAML configuration files.
+    *   `default_config.yaml`: Provides default parameters for all aspects of the pipeline, from data paths and graph construction parameters to model hyperparameters and logging settings.
+    *   Custom configuration files can be created to manage different experiments. These are loaded by the scripts and can be overridden by command-line arguments.
+
+*   **`data/`**: This directory is intended as the default location for input CFD datasets.
+    *   Datasets typically consist of multiple "cases" (e.g., different simulation runs or geometries like `sUbend_011`, `sUbend_012`).
+    *   Each case contains a series of VTK files (e.g., `Frame_00_data.vtk`, `Frame_01_data.vtk`) representing snapshots of the flow field over time, usually located under a `CFD/` subdirectory within the case folder.
+
+*   **`outputs/`**: This is the default directory where all generated files are saved (and is typically gitignored).
+    *   For each run (e.g., a training run or a validation run), a subdirectory is created (often named after the `run_name`).
+    *   Inside a run's directory, you'll find:
+        *   Saved model checkpoints (e.g., `flownet_best.pth`).
+        *   Log files (e.g., `training_metrics.csv`, detailed per-frame metrics CSVs).
+        *   Predicted VTK files generated during validation.
+        *   Visualization outputs, such as JSD heatmaps or slice analysis plots.
+        *   Weights & Biases logs (if enabled and not stored elsewhere).
+
+*   **`scripts/`**: Contains Python scripts that drive the different stages of the machine learning pipeline. Each script typically corresponds to a specific task:
+    *   `1_prepare_noisy_data.py`: Preprocesses raw CFD data by injecting MRI-like noise to velocity fields and/or point positions. This is useful for simulating sensor noise or for data augmentation.
+    *   `2_train_model.py`: The main script for training GNN models. It handles data loading, model initialization, the training loop (including periodic validation), metric logging, and checkpoint saving.
+    *   `3a_validate_knn.py`: Validates a trained model using k-Nearest Neighbors (k-NN) graphs.
+    *   `3b_validate_full_mesh.py`: Validates a trained model using graphs derived directly from the mesh's tetrahedral cell connectivity.
+    *   `4_validate_histograms.py`: Performs standalone Jensen-Shannon Divergence (JSD) histogram validation by comparing two sets of VTK data (e.g., ground truth vs. model predictions).
+    *   `5_combined_validation.py`: Orchestrates a full validation sequence, typically involving model inference (like `3a` or `3b`) followed by JSD histogram analysis.
+    *   `run_experiments.py`: (If present, or as a concept) Can be used to automate running multiple configurations or experiments.
+
+*   **`src/cfd_gnn/`**: This is the core Python library containing all the reusable logic for the project.
+    *   `__init__.py`: Makes the directory a Python package.
+    *   `data_utils.py`: Handles data loading from VTK files, noise injection logic, graph construction (both k-NN and full mesh), and the `PairedFrameDataset` class used by PyTorch Geometric DataLoaders.
+    *   `losses.py`: Defines custom loss functions used during training, such as the supervised MSE loss, a physics-informed divergence loss, and a histogram-based loss component.
+    *   `metrics.py`: Implements various evaluation metrics, including Turbulent Kinetic Energy (TKE), Cosine Similarity, Jensen-Shannon Divergence (JSD) for velocity histograms, vorticity calculations, and new slice-based analysis functions.
+    *   `models.py`: Contains definitions of the Graph Neural Network architectures (e.g., `FlowNet`, `RotFlowNet/Gao`) and their building blocks like MLP layers and GNN steps.
+    *   `training.py`: Implements the core training loop (`train_single_epoch`) and the during-training validation logic (`validate_on_pairs`).
+    *   `utils.py`: Provides general helper functions for tasks like configuration loading, setting random seeds, initializing Weights & Biases, managing device (CPU/GPU) selection, and VTK I/O.
+    *   `validation.py`: Contains standalone validation utilities, particularly the pipeline for JSD histogram analysis.
+
+### Workflow Overview
+
+The typical workflow in this project can be summarized as follows:
+
+1.  **Data Preparation**:
+    *   Place your raw CFD datasets (series of VTK files per case) into a directory (e.g., `data/my_dataset_clean`).
+    *   (Optional) If training with noisy data, use `scripts/1_prepare_noisy_data.py` to generate a noisy version of your dataset (e.g., `outputs/noisy_data/my_dataset_noisy`). This script reads clean VTK files, injects configurable noise, and saves new noisy VTK files.
+        ```bash
+        python scripts/1_prepare_noisy_data.py --source-dir data/my_dataset_clean --output-dir outputs/noisy_data/my_dataset_noisy ...
+        ```
+
+2.  **Configuration**:
+    *   Modify `config/default_config.yaml` or create a new YAML file (e.g., `config/my_experiment.yaml`) to set data paths, model parameters (like hidden dimensions, number of layers), training parameters (learning rate, batch size, epochs, loss weights, regularization), graph construction details (k for k-NN, downsampling), and W&B settings.
+
+3.  **Model Training**:
+    *   Run `scripts/2_train_model.py`, specifying your configuration, a run name, and the models to train.
+        ```bash
+        python scripts/2_train_model.py --config config/my_experiment.yaml --run-name my_training_run --models-to-train FlowNet ...
+        ```
+    *   This script will:
+        *   Load the specified dataset (e.g., the noisy dataset prepared in step 1 for training, and a corresponding validation set).
+        *   Construct graph pairs using `PairedFrameDataset` from `data_utils.py`.
+        *   Initialize the specified GNN model(s) from `models.py`.
+        *   Run the training loop defined in `training.py`, using losses from `losses.py`.
+        *   Periodically evaluate the model on the validation set, calculating metrics from `metrics.py`.
+        *   Log all metrics, configuration, and (optionally) sample visualizations to Weights & Biases and local CSV files.
+        *   Save the best model checkpoint(s) to the `outputs/<run_name>/models/` directory.
+
+4.  **Model Validation & Analysis**:
+    *   After training, use the saved model checkpoint(s) for more detailed validation.
+    *   **k-NN Graph Validation**:
+        ```bash
+        python scripts/3a_validate_knn.py --model-checkpoint outputs/<run_name>/models/flownet_best.pth --model-name FlowNet ...
+        ```
+    *   **Full Mesh Graph Validation**:
+        ```bash
+        python scripts/3b_validate_full_mesh.py --model-checkpoint outputs/<run_name>/models/flownet_best.pth --model-name FlowNet ...
+        ```
+    *   **Combined Validation (Inference + JSD)**:
+        ```bash
+        python scripts/5_combined_validation.py --model-checkpoint outputs/<run_name>/models/flownet_best.pth --model-name FlowNet ...
+        ```
+    *   These validation scripts will:
+        *   Load the specified validation dataset.
+        *   For each frame, construct the appropriate graph type.
+        *   Perform inference using the trained model.
+        *   Calculate a comprehensive set of metrics (overall, per-case, per-frame, and per-slice if enabled).
+        *   Save detailed metrics to CSV files (e.g., `frame_metrics_....csv`, `frame_slice_metrics_....csv`).
+        *   Save predicted VTK fields.
+        *   Log aggregated metrics and histograms to W&B.
+
+5.  **Results Review**:
+    *   Analyze the metrics logged to W&B dashboards.
+    *   Inspect the generated CSV files for detailed performance numbers.
+    *   Visualize the predicted VTK files in tools like ParaView to qualitatively assess model performance.
+
+This modular structure allows for flexibility in experimentation and makes it easier to extend or modify specific parts of the pipeline.
+
 ## Project Structure
 
 ```
