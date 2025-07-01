@@ -8,6 +8,7 @@ import torch
 import torch.nn as nn
 from torch_geometric.data import Data
 from torch_scatter import scatter_add
+from torch.utils.checkpoint import checkpoint
 
 # Ensure this MLP is flexible enough for various uses (encoder, decoder, within GNNStep)
 def MLP(
@@ -158,7 +159,11 @@ class BaseFlowGNN(nn.Module):
 
         # 2. Message passing through GNN layers
         for conv_layer in self.convs:
-            h_node = conv_layer(h_node, data.edge_index, h_edge)
+            # Apply activation checkpointing to each GNN layer
+            # The lambda is used to pass arguments correctly to the checkpointed function
+            # h_node requires_grad must be true if not a leaf tensor and checkpointing is used.
+            # It should be true by default if it's an output of a previous nn.Module.
+            h_node = checkpoint(conv_layer, h_node, data.edge_index, h_edge, use_reentrant=False)
             # Potentially add residual connections or normalization here if needed
 
         # 3. Decode node features to get predictions

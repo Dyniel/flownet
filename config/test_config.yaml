@@ -12,7 +12,7 @@ noisy_train_root: "C:/Program Files/flownet/data/CFD_Ubend_other_noisy" # Exampl
 noisy_val_root: "C:/Program Files/flownet/data/CFD_Ubend_other_val_noisy"   # Example
 
 # Graph construction parameters
-down_n: 20000   # Number of points to downsample to for kNN graphs. Set to 0 or null for no downsampling.
+down_n: 2000   # Number of points to downsample to for kNN graphs. Set to 0 or null for no downsampling.
 k: 12           # Number of nearest neighbors for kNN graph construction.
 
 # Model architecture (can be overridden by model-specific configs)
