@@ -16,40 +16,24 @@ This project provides a comprehensive suite for training and validating Graph Ne
 *   **Weights & Biases Integration**: Comprehensive logging of metrics, configurations, and artifacts.
 *   **Multiple Validation Strategies**: Supports both geometry-based graph construction (k-NN) and topology-based (full mesh from tetrahedra).
 
-## Recent Enhancements (July 2024)
+## Visual Project Overview
 
-*   **Memory Optimization**:
-    *   Resolved potential CUDA OutOfMemoryErrors during training by enabling graph downsampling (via `down_n` in `graph_config`) and implementing activation checkpointing within the GNN models. This allows training with larger graphs/models on memory-constrained GPUs.
-*   **Flexible Data Source Selection**:
-    *   The main training script (`scripts/2_train_model.py`) now includes a `--data-source` command-line flag. This allows users to easily switch between training and validating on `clean` or `noisy` datasets (default is `noisy`).
-    *   Example: `python scripts/2_train_model.py --data-source clean ...`
-*   **Enhanced Metrics**:
-    *   **Component-wise Velocity MSE**: Validation now includes Mean Squared Error for each velocity component (X, Y, Z), logged as `val_mse_x`, `val_mse_y`, `val_mse_z`.
-    *   **Vorticity Magnitude MSE**: Validation includes Mean Squared Error of the vorticity magnitude, logged as `val_mse_vorticity_mag`. This requires the `pyvista` library.
-*   **Improved Visualizations & Outputs**:
-    *   **Detailed Validation VTKs**: During validation steps in `2_train_model.py`, the script can now save detailed VTK files. These files include `true_velocity`, `predicted_velocity`, `velocity_error_magnitude`, `true_vorticity_magnitude`, and `predicted_vorticity_magnitude` fields. This feature is controlled by the `save_validation_fields_vtk: true` setting under `validation_during_training` in the YAML configuration.
-    *   **W&B Sample Image Logging**: A proof-of-concept has been implemented to log a visual comparison (2D slice of true/predicted/error velocity magnitudes) for a single validation sample directly to Weights & Biases during training. This provides a quick visual check of model performance.
-*   **Dependency Update**:
-    *   `pyvista` is now used for vorticity calculations. Ensure it is installed in your environment (`pip install pyvista`).
+To better understand the project's organization and typical task execution, diagrams are provided below.
 
-## Wizualna Reprezentacja Projektu
+### Project Component Architecture
 
-Aby lepiej zrozumieć, jak zorganizowany jest projekt i jak przebiegają typowe zadania, poniżej znajdują się diagramy.
-
-### Architektura Komponentów Projektu
-
-Ten diagram pokazuje główne bloki składowe projektu i ich wzajemne powiązania.
+This diagram shows the main building blocks of the project and their interconnections.
 
 ```mermaid
 graph LR
-    subgraph UserInput[\"Dane Wejściowe i Konfiguracja\"]
+    subgraph UserInput[Input Data and Configuration]
         direction LR
         rawData[fa:fa-database Raw CFD Data (.vtk series) in data/]
         customConfig[fa:fa-file-code Custom YAML Configs in config/]
         defaultConfig[fa:fa-file-alt Default Config (default_config.yaml) in config/]
     end
 
-    subgraph CoreLogic[\"Główna Biblioteka (src/cfd_gnn)\"]
+    subgraph CoreLogic[Core Library (src/cfd_gnn)]
         direction TB
         dataUtils[fa:fa-cogs data_utils.py<br>(Data Loading, Noise, Graph Building, Dataset)]
         models[fa:fa-brain models.py<br>(GNN Architectures: FlowNet, Gao)]
@@ -60,7 +44,7 @@ graph LR
         utils[fa:fa-tools utils.py<br>(Helpers: Config, Seed, W&B, VTK I/O)]
     end
 
-    subgraph Scripts[\"Skrypty Uruchomieniowe (scripts/)\"]
+    subgraph Scripts[Executable Scripts (scripts/)]
         direction TB
         script1[fa:fa-magic 1_prepare_noisy_data.py]
         script2[fa:fa-play-circle 2_train_model.py]
@@ -71,11 +55,21 @@ graph LR
         scriptRunExp[fa:fa-rocket run_experiments.py]
     end
 
-    subgraph Outputs[\"Wyniki i Artefakty (outputs/)\"]
+    subgraph Outputs[Outputs and Artifacts (outputs/)]
         direction LR
-        noisyData[fa:fa-database Noisy CFD Data in outputs/noisy_data/]\n        runOutputs[fa:fa-folder-open Per-Run Outputs in outputs/RUN_NAME/]\n        subgraph RunSpecific[\"Wewnątrz outputs/RUN_NAME/\"]\n            direction TB\n            trainedModels[fa:fa-save Saved Models (.pth)]\n            logFiles[fa:fa-file-csv Log Files (.csv)]\n            predictionVTKs[fa:fa-file-export Predicted VTKs]\n            jsdHeatmaps[fa:fa-map JSD Heatmaps]\n        end\n        wandb[fa:fa-cloud Weights & Biases (External)]\n    end
+        noisyData[fa:fa-database Noisy CFD Data in outputs/noisy_data/]
+        runOutputs[fa:fa-folder-open Per-Run Outputs in outputs/RUN_NAME/]
+        subgraph RunSpecific[Inside outputs/RUN_NAME/]
+            direction TB
+            trainedModels[fa:fa-save Saved Models (.pth)]
+            logFiles[fa:fa-file-csv Log Files (.csv)]
+            predictionVTKs[fa:fa-file-export Predicted VTKs]
+            jsdHeatmaps[fa:fa-map JSD Heatmaps]
+        end
+        wandb[fa:fa-cloud Weights & Biases (External)]
+    end
 
-    %% Połączenia
+    %% Connections
     rawData --> script1
     defaultConfig --> Scripts
     customConfig --> Scripts
@@ -101,86 +95,86 @@ graph LR
     runOutputs --> wandb
 ```
 
-### Przepływ Pracy (Workflow)
+### Workflow
 
-Ten diagram ilustruje typową sekwencję kroków wykonywanych podczas pracy z projektem, od przygotowania danych po analizę wyników.
+This diagram illustrates the typical sequence of steps performed when working with the project, from data preparation to results analysis.
 
 ```mermaid
 sequenceDiagram
-    participant User as fa:fa-user Użytkownik
+    participant User as fa:fa-user User
     participant P1 as fa:fa-magic 1_prepare_noisy_data.py
     participant P2 as fa:fa-play-circle 2_train_model.py
     participant P3a as fa:fa-project-diagram 3a_validate_knn.py
     participant P3b as fa:fa-network-wired 3b_validate_full_mesh.py
     participant P5 as fa:fa-sitemap 5_combined_validation.py
-    participant DataDir as fa:fa-database Dane (data/, outputs/noisy_data/)
-    participant ConfigFile as fa:fa-file-code Plik Konfiguracyjny (config/*.yaml)
-    participant OutputDir as fa:fa-folder-open Wyniki (outputs/RUN_NAME/)
+    participant DataDir as fa:fa-database Data (data/, outputs/noisy_data/)
+    participant ConfigFile as fa:fa-file-code Configuration File (config/*.yaml)
+    participant OutputDir as fa:fa-folder-open Outputs (outputs/RUN_NAME/)
     participant WandB as fa:fa-cloud Weights & Biases
 
-    User->>ConfigFile: (1) Definiuje/Modyfikuje Konfigurację (ścieżki, parametry)
-    User->>P1: (2) Uruchamia (opcjonalnie) z --source-dir, --output-dir
-    P1->>DataDir: Czyta czyste dane VTK
-    P1->>DataDir: Zapisuje zaszumione dane VTK
-    Note over User,DataDir: Krok (2) jest potrzebny, jeśli trenujemy na danych zaszumionych i ich nie ma.
+    User->>ConfigFile: (1) Defines/Modifies Configuration (paths, parameters)
+    User->>P1: (2) Runs (optionally) with --source-dir, --output-dir
+    P1->>DataDir: Reads clean VTK data
+    P1->>DataDir: Writes noisy VTK data
+    Note over User,DataDir: Step (2) is needed if training on noisy data and it doesn't exist.
 
-    User->>P2: (3) Uruchamia z --config, --run-name, [--data-source], [--models-to-train], etc.
-    P2->>ConfigFile: Wczytuje konfigurację
-    P2->>DataDir: Wczytuje dane treningowe i walidacyjne (czyste/zaszumione)
-    loop Trening i Walidacja co N epok
-        P2->>P2: Przetwarzanie danych, budowa grafów
-        P2->>P2: Trening modelu (epoka)
-        P2->>P2: Walidacja modelu (na zbiorze walidacyjnym)
-        P2->>WandB: Loguje metryki, konfigurację, obrazy
-        P2->>OutputDir: Zapisuje metryki lokalnie (CSV)
+    User->>P2: (3) Runs with --config, --run-name, [--data-source], [--models-to-train], etc.
+    P2->>ConfigFile: Loads configuration
+    P2->>DataDir: Loads training and validation data (clean/noisy)
+    loop Training and Validation every N epochs
+        P2->>P2: Data processing, graph construction
+        P2->>P2: Model training (epoch)
+        P2->>P2: Model validation (on validation set)
+        P2->>WandB: Logs metrics, configuration, images
+        P2->>OutputDir: Saves metrics locally (CSV)
     end
-    P2->>OutputDir: Zapisuje najlepszy model (.pth)
-    P2->>OutputDir: (Opcjonalnie) Zapisuje predykcje VTK z walidacji podczas treningu
+    P2->>OutputDir: Saves best model (.pth)
+    P2->>OutputDir: (Optionally) Saves VTK predictions from validation during training
 
-    User->>P3a: (4a) Uruchamia walidację k-NN (po treningu)
-    P3a->>OutputDir: Wczytuje wytrenowany model
-    P3a->>ConfigFile: Wczytuje konfigurację walidacji
-    P3a->>DataDir: Wczytuje dane walidacyjne
-    P3a->>P3a: Przeprowadza inferencję, oblicza metryki (k-NN graphs)
-    P3a->>OutputDir: Zapisuje predykcje VTK i metryki CSV
-    P3a->>WandB: Loguje metryki walidacji
+    User->>P3a: (4a) Runs k-NN validation (post-training)
+    P3a->>OutputDir: Loads trained model
+    P3a->>ConfigFile: Loads validation configuration
+    P3a->>DataDir: Loads validation data
+    P3a->>P3a: Performs inference, calculates metrics (k-NN graphs)
+    P3a->>OutputDir: Saves VTK predictions and metrics CSV
+    P3a->>WandB: Logs validation metrics
 
-    User->>P3b: (4b) Uruchamia walidację Full Mesh (po treningu)
-    P3b->>OutputDir: Wczytuje wytrenowany model
-    P3b->>ConfigFile: Wczytuje konfigurację walidacji
-    P3b->>DataDir: Wczytuje dane walidacyjne
-    P3b->>P3b: Przeprowadza inferencję, oblicza metryki (Full Mesh graphs)
-    P3b->>OutputDir: Zapisuje predykcje VTK i metryki CSV
-    P3b->>WandB: Loguje metryki walidacji
+    User->>P3b: (4b) Runs Full Mesh validation (post-training)
+    P3b->>OutputDir: Loads trained model
+    P3b->>ConfigFile: Loads validation configuration
+    P3b->>DataDir: Loads validation data
+    P3b->>P3b: Performs inference, calculates metrics (Full Mesh graphs)
+    P3b->>OutputDir: Saves VTK predictions and metrics CSV
+    P3b->>WandB: Logs validation metrics
 
-    User->>P5: (4c) Uruchamia Połączoną Walidację (np. inferencja + JSD)
-    P5->>OutputDir: Wczytuje wytrenowany model
-    P5->>ConfigFile: Wczytuje konfigurację
-    P5->>DataDir: Wczytuje dane walidacyjne
-    P5->>P5: Krok 1: Inferencja (jak 3a lub 3b)
-    P5->>OutputDir: Zapisuje predykcje VTK
-    P5->>P5: Krok 2: Analiza JSD (porównanie histogramów)
-    P5->>OutputDir: Zapisuje wyniki JSD (np. heatmaps VTK)
-    P5->>WandB: Loguje metryki połączonej walidacji
+    User->>P5: (4c) Runs Combined Validation (e.g., inference + JSD)
+    P5->>OutputDir: Loads trained model
+    P5->>ConfigFile: Loads configuration
+    P5->>DataDir: Loads validation data
+    P5->>P5: Step 1: Inference (like 3a or 3b)
+    P5->>OutputDir: Saves VTK predictions
+    P5->>P5: Step 2: JSD Analysis (histogram comparison)
+    P5->>OutputDir: Saves JSD results (e.g., VTK heatmaps)
+    P5->>WandB: Logs combined validation metrics
 
-    Note over User,OutputDir: Użytkownik analizuje wyniki w W&B oraz lokalne pliki w OutputDir.
+    Note over User,OutputDir: User analyzes results in W&B and local files in OutputDir.
 ```
 
-## Przykładowe Scenariusze Użycia (Szybki Start)
+## Common Usage Scenarios (Quick Start)
 
-Poniżej znajdują się przykłady, jak uruchomić trening i walidację w różnych popularnych konfiguracjach. Zakładają one, że znajdujesz się w głównym katalogu projektu i masz aktywowane środowisko wirtualne.
+Below are examples of how to run training and validation for various common setups. These assume you are in the project's root directory and have your virtual environment activated.
 
-**Ważne uwagi przed startem:**
+**Important Notes Before Starting:**
 
-*   **Plik konfiguracyjny:** Wiele ustawień (np. ścieżki do głównych zbiorów danych `train_root`, `val_root`, parametry modelu jak `h_dim`, `layers`) jest wczytywanych z pliku YAML (domyślnie `config/default_config.yaml` lub `config/test_config.yaml` dla `run_experiments.py`, albo plik podany przez `--config`). Poniższe flagi CLI mogą nadpisywać wartości z pliku konfiguracyjnego.
-*   **Przygotowanie danych zaszumionych:** Jeśli scenariusz zakłada użycie danych zaszumionych (`--data-source noisy` lub jeśli jest to domyślne ustawienie w konfiguracji), upewnij się, że zostały one wcześniej wygenerowane za pomocą skryptu `scripts/1_prepare_noisy_data.py`. Ścieżki do tych danych (`noisy_train_root`, `noisy_val_root`) również powinny być poprawnie ustawione w pliku konfiguracyjnym.
-*   **Nazwa przebiegu (`--run-name`):** Zawsze podawaj unikalną i opisową nazwę dla każdego przebiegu. Będzie ona używana do tworzenia katalogu z wynikami w `outputs/` oraz do identyfikacji przebiegu w Weights & Biases.
-*   **Model do trenowania (`--models-to-train`):** Określ, który model chcesz trenować, np. `FlowNet` lub `Gao`.
+*   **Configuration File:** Many settings (e.g., paths to main datasets `train_root`, `val_root`, model parameters like `h_dim`, `layers`) are loaded from a YAML file (e.g., `config/default_config.yaml`, `config/test_config.yaml` for `run_experiments.py`, or a file specified by `--config`). The CLI flags shown below can override values from the configuration file.
+*   **Noisy Data Preparation:** If your scenario involves using noisy data (`--data-source noisy` or if it's the default in your config), ensure it has been generated beforehand using `scripts/1_prepare_noisy_data.py`. Paths to this data (`noisy_train_root`, `noisy_val_root`) should also be correctly set in your configuration file.
+*   **Run Name (`--run-name`):** Always provide a unique and descriptive name for each run. It will be used to create an output directory in `outputs/` and to identify the run in Weights & Biases.
+*   **Model to Train (`--models-to-train`):** Specify which model you want to train, e.g., `FlowNet` or `Gao`.
 
-### Scenariusz 1: Trening i walidacja na danych CZYSTYCH
+### Scenario 1: Training and Validation on CLEAN Data
 
-*   **Cel:** Model uczy się i jest oceniany na idealnych danych, bez symulowanego szumu.
-*   **Jak:** Użyj flagi `--data-source clean`. Dodatkowo, w pliku konfiguracyjnym YAML, w sekcji `validation_during_training`, ustaw `use_noisy_data: false`.
+*   **Goal:** The model learns and is evaluated on ideal data, without simulated noise.
+*   **How:** Use the `--data-source clean` flag. Additionally, in your YAML configuration file, under the `validation_during_training` section, set `use_noisy_data: false`.
 
 ```bash
 python scripts/2_train_model.py \
@@ -189,22 +183,22 @@ python scripts/2_train_model.py \
     --models-to-train FlowNet \
     --data-source clean \
     --epochs 100
-    # Upewnij się, że w default_config.yaml masz (lub w Twoim pliku --config):
+    # Ensure your default_config.yaml (or your --config file) has:
     # validation_during_training:
     #   enabled: true
     #   use_noisy_data: false
 ```
-*Jeśli chcesz, aby powyższe polecenie zadziałało bez modyfikacji pliku YAML, skrypt `2_train_model.py` musiałby mieć dodatkową flagę CLI do kontrolowania `validation_during_training.use_noisy_data` lub ta logika musiałaby być sprytniej powiązana z `--data-source`.*
+*If you want the command above to work without modifying the YAML file, `2_train_model.py` would need an additional CLI flag to control `validation_during_training.use_noisy_data`, or this logic would need to be more tightly coupled with `--data-source`.*
 
-### Scenariusz 2: Trening i walidacja na danych ZASZUMIONYCH
+### Scenario 2: Training and Validation on NOISY Data
 
-*   **Cel:** Standardowy przypadek, gdzie model uczy się na danych z dodanym szumem (symulując np. niedokładności pomiarowe) i jest walidowany na podobnie zaszumionym zbiorze.
-*   **Jak:** Użyj flagi `--data-source noisy` (jest to często domyślne zachowanie, jeśli flaga nie jest podana, ale zależy to od implementacji w `2_train_model.py` i ustawień w pliku konfiguracyjnym). W pliku YAML, `validation_during_training.use_noisy_data: true`.
+*   **Goal:** A standard case where the model learns on data with added noise (simulating measurement inaccuracies, etc.) and is validated on a similarly noisy dataset.
+*   **How:** Use the `--data-source noisy` flag (this is often the default if the flag is omitted, but depends on `2_train_model.py`'s implementation and config file settings). In your YAML, `validation_during_training.use_noisy_data: true`.
 
 ```bash
-# Upewnij się, że dane zaszumione istnieją w ścieżkach podanych w konfiguracji!
-# np. /home/student2/ethz/CFD_Ubend_other_noisy (zgodnie z test_config.yaml)
-# Możesz je wygenerować skryptem 1_prepare_noisy_data.py:
+# Ensure noisy data exists at the paths specified in your configuration!
+# e.g., /home/student2/ethz/CFD_Ubend_other_noisy (as per test_config.yaml)
+# You can generate it with 1_prepare_noisy_data.py:
 # python scripts/1_prepare_noisy_data.py --source-dir /path/to/clean/train --output-dir /path/to/noisy/train [--p-min ...] [--p-max ...]
 # python scripts/1_prepare_noisy_data.py --source-dir /path/to/clean/val --output-dir /path/to/noisy/val [--p-min ...] [--p-max ...]
 
@@ -214,16 +208,16 @@ python scripts/2_train_model.py \
     --models-to-train FlowNet \
     --data-source noisy \
     --epochs 100
-    # Upewnij się, że w default_config.yaml masz (lub w Twoim pliku --config):
+    # Ensure your default_config.yaml (or your --config file) has:
     # validation_during_training:
     #   enabled: true
     #   use_noisy_data: true
 ```
 
-### Scenariusz 3: Trening na CZYSTYCH, walidacja na ZASZUMIONYCH
+### Scenario 3: Training on CLEAN Data, Validation on NOISY Data
 
-*   **Cel:** Sprawdzenie, jak model wytrenowany na idealnych danych radzi sobie w warunkach zaszumionych.
-*   **Jak:** `--data-source clean` dla treningu. W YAML, `validation_during_training.use_noisy_data: true` dla walidacji podczas treningu.
+*   **Goal:** Test how a model trained on ideal data performs in noisy conditions.
+*   **How:** Use `--data-source clean` for training. In YAML, set `validation_during_training.use_noisy_data: true` for validation during training.
 
 ```bash
 python scripts/2_train_model.py \
@@ -232,17 +226,17 @@ python scripts/2_train_model.py \
     --models-to-train FlowNet \
     --data-source clean \
     --epochs 100
-    # Upewnij się, że w default_config.yaml masz (lub w Twoim pliku --config):
+    # Ensure your default_config.yaml (or your --config file) has:
     # validation_during_training:
     #   enabled: true
     #   use_noisy_data: true
-    # (oraz że noisy_val_root wskazuje na zaszumione dane walidacyjne)
+    # (and that noisy_val_root points to noisy validation data)
 ```
 
-### Scenariusz 4: Trening na ZASZUMIONYCH, walidacja na CZYSTYCH
+### Scenario 4: Training on NOISY Data, Validation on CLEAN Data
 
-*   **Cel:** Sprawdzenie, czy model uczony na "trudniejszych" (zaszumionych) danych potrafi dobrze generalizować do idealnych, czystych warunków.
-*   **Jak:** `--data-source noisy` dla treningu. W YAML, `validation_during_training.use_noisy_data: false` dla walidacji podczas treningu.
+*   **Goal:** See if a model trained on "harder" (noisy) data can generalize well to ideal, clean conditions.
+*   **How:** Use `--data-source noisy` for training. In YAML, set `validation_during_training.use_noisy_data: false` for validation during training.
 
 ```bash
 python scripts/2_train_model.py \
@@ -251,66 +245,66 @@ python scripts/2_train_model.py \
     --models-to-train FlowNet \
     --data-source noisy \
     --epochs 100
-    # Upewnij się, że w default_config.yaml masz (lub w Twoim pliku --config):
+    # Ensure your default_config.yaml (or your --config file) has:
     # validation_during_training:
     #   enabled: true
     #   use_noisy_data: false
-    # (oraz że val_root wskazuje na czyste dane walidacyjne)
+    # (and that val_root points to clean validation data)
 ```
 
-### Scenariusz 5: Kontrola Typu Grafu (k-NN vs Full Mesh)
+### Scenario 5: Controlling Graph Type (k-NN vs. Full Mesh)
 
-*   **Cel:** Wybór sposobu konstrukcji grafu dla modelu.
-*   **Jak:** Głównie przez plik konfiguracyjny YAML. W sekcji `graph_config` (lub podobnej, np. `test_config.yaml` ma `default_graph_type` oraz `graph_config`):
-    *   Dla **k-NN**: ustaw `default_graph_type: "knn"`, oraz zdefiniuj `graph_config.k` (liczba sąsiadów) i `graph_config.down_n` (liczba punktów po downsamplingu, `null` lub `0` dla braku downsamplingu).
-    *   Dla **Full Mesh**: ustaw `default_graph_type: "full_mesh"`. Parametry `k` i `down_n` są wtedy zwykle ignorowane.
+*   **Goal:** Choose the graph construction method for the model.
+*   **How:** Primarily through the YAML configuration file. In your `graph_config` section (or similar, depending on your YAML structure; e.g., `test_config.yaml` has `default_graph_type` and `graph_config`):
+    *   For **k-NN**: set `default_graph_type: "knn"`, and define `graph_config.k` (number of neighbors) and `graph_config.down_n` (number of points after downsampling; `null` or `0` for no downsampling).
+    *   For **Full Mesh**: set `default_graph_type: "full_mesh"`. Parameters `k` and `down_n` are then usually ignored.
 
-**Przykład (modyfikacja fragmentu pliku YAML, np. `my_custom_config.yaml`):**
+**Example (modifying a section of your YAML, e.g., `my_custom_config.yaml`):**
 
 ```yaml
-# ... inne ustawienia ...
+# ... other settings ...
 
-default_graph_type: "full_mesh" # lub "knn"
+default_graph_type: "full_mesh" # or "knn"
 
 graph_config:
-  k: 12          # Istotne dla knn
-  down_n: 20000  # Istotne dla knn, null lub 0 dla braku downsamplingu
-  # ... inne parametry graph_config
+  k: 12          # Relevant for knn
+  down_n: 20000  # Relevant for knn, null or 0 for no downsampling
+  # ... other graph_config parameters
 
-# ... reszta ustawień ...
+# ... rest of settings ...
 ```
 
-Następnie uruchom trening z tym plikiem konfiguracyjnym:
+Then, run training with this configuration file:
 ```bash
 python scripts/2_train_model.py --config config/my_custom_config.yaml --run-name training_with_full_mesh --models-to-train FlowNet --epochs 100
 ```
-*Obecnie skrypt `2_train_model.py` nie posiada flag CLI do bezpośredniego przełączania `default_graph_type` czy parametrów `k` i `down_n`. Należy je ustawić w pliku konfiguracyjnym.*
+*Currently, `2_train_model.py` does not have CLI flags to directly switch `default_graph_type` or parameters like `k` and `down_n`. These must be set in the configuration file.*
 
-### Uruchamianie Wielu Eksperymentów (za pomocą `scripts/run_experiments.py`)
+### Running Multiple Experiments (using `scripts/run_experiments.py`)
 
-Skrypt `scripts/run_experiments.py` jest przeznaczony do uruchamiania serii predefiniowanych eksperymentów. Aby użyć go do konkretnego scenariusza z powyższych:
+The `scripts/run_experiments.py` script is designed to run a series of predefined experiments. To use it for a specific scenario from above:
 
-1.  **Zmodyfikuj `scripts/run_experiments.py`**:
-    *   Ustaw `BASE_CONFIG_PATH` na plik YAML, który ma większość potrzebnych ustawień (np. odpowiednie ścieżki, `validation_during_training.use_noisy_data`).
-    *   W liście `experiments`, pozostaw lub stwórz tylko jeden słownik, który nadpisuje parametry zgodnie z wybranym scenariuszem (np. dodając `"data_source": "clean"` lub modyfikując `loss_config`).
+1.  **Modify `scripts/run_experiments.py`**:
+    *   Set `BASE_CONFIG_PATH` to a YAML file that has most of the required settings (e.g., correct paths, `validation_during_training.use_noisy_data`).
+    *   In the `experiments` list, leave or create only one dictionary that overrides parameters according to your chosen scenario (e.g., adding `"data_source": "clean"` or modifying `loss_config`).
 
-Przykład (fragment `run_experiments.py` dla Scenariusza 1):
+Example (excerpt from `run_experiments.py` for Scenario 1):
 ```python
-# W scripts/run_experiments.py
-BASE_CONFIG_PATH = "config/config_for_clean_training.yaml" # Załóżmy, że ten plik ma use_noisy_data: false
+# In scripts/run_experiments.py
+BASE_CONFIG_PATH = "config/config_for_clean_training.yaml" # Assuming this file has use_noisy_data: false
 DEFAULT_EPOCHS = 100
 
 experiments = [
     {
         "run_name_suffix": "single_clean_experiment",
-        "data_source": "clean", # Nadpisanie na wszelki wypadek
+        "data_source": "clean", # Override just in case
         "models_to_train": ["FlowNet"],
-        # ... inne potrzebne nadpisania ...
+        # ... other necessary overrides ...
     },
 ]
-# ... reszta skryptu ...
+# ... rest of the script ...
 ```
-Następnie uruchom: `python scripts/run_experiments.py`
+Then run: `python scripts/run_experiments.py`
 
 
 ## Project Architecture and Workflow
