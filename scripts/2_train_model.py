@@ -31,6 +31,7 @@ import time
 from pathlib import Path
 import sys
 import shutil
+import wandb
 
 import torch
 from torch.optim import Adam
@@ -42,7 +43,7 @@ from torch_geometric.loader import DataLoader as PyGDataLoader
 project_root = Path(__file__).resolve().parent.parent
 sys.path.append(str(project_root))
 
-from src.cfd_gnn.data_utils import PairedFrameDataset, make_frame_pairs
+from src.cfd_gnn.data_utils import PairedFrameDataset, make_frame_pairs, vtk_to_knn_graph, vtk_to_fullmesh_graph
 from src.cfd_gnn.models import FlowNet, RotFlowNet # Add other models if created
 from src.cfd_gnn.training import train_single_epoch, validate_on_pairs
 from src.cfd_gnn.validation import histogram_jsd_validation # For post-training validation
@@ -197,7 +198,7 @@ def main():
         model_arch_cfg = {**cfg, **cfg.get(f"{model_name}_config", {})} # Allow model-specific overrides
         model = models_registry[model_name](model_arch_cfg).to(device)
         optimizer = Adam(model.parameters(), lr=cfg["lr"])
-        scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=cfg["patience"] // 2, verbose=True) # Adjusted patience for scheduler
+        scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=cfg["patience"] // 2) # Adjusted patience for scheduler
 
         best_val_metric = float('inf')
         epochs_no_improve = 0

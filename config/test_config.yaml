@@ -1,0 +1,125 @@
+# Default Configuration for CFD GNN Pipeline
+
+# Data roots - these should point to the directories containing your CFD cases
+# e.g., data/CFD_Ubend_other/sUbend_001/CFD/*.vtk
+train_root: 'C:/Program Files/flownet/data/CFD_Ubend_other'
+val_root:   'C:/Program Files/flownet/data/CFD_Ubend_other_val'
+
+
+# Noisy data directories (will be created by the data preparation script)
+# These paths are relative to the project root if not absolute.
+noisy_train_root: "C:/Program Files/flownet/data/CFD_Ubend_other_noisy" # Example, script should make this configurable
+noisy_val_root: "C:/Program Files/flownet/data/CFD_Ubend_other_val_noisy"   # Example
+
+# Graph construction parameters
+down_n: 20000   # Number of points to downsample to for kNN graphs. Set to 0 or null for no downsampling.
+k: 12           # Number of nearest neighbors for kNN graph construction.
+
+# Model architecture (can be overridden by model-specific configs)
+h_dim: 128      # Hidden dimension size in GNN layers and MLPs.
+layers: 5       # Number of GNN layers.
+# More detailed model params (defaults are in src/cfd_gnn/models.py if not set here)
+# node_in_features: 3
+# edge_in_features: 3
+# node_out_features: 3
+# encoder_mlp_layers: 2
+# decoder_mlp_layers: 2
+# gnn_step_mlp_layers: 2
+
+# Optimization parameters
+lr: 0.0002
+lambda_p: 0.10  # Weight for the physical divergence loss component.
+lambda_h: 0.05  # Weight for the histogram (Wasserstein-1 distance) loss component.
+nbins: 64       # Number of bins for histogram calculations (loss and JSD).
+epochs: 100     # Total number of training epochs.
+batch_size: 4
+patience: 10    # Patience for early stopping and learning rate scheduler.
+clip_grad_norm: 1.0 # Value for gradient clipping, null or 0 for no clipping.
+seed: 42
+
+# MRI-like noise injection parameters
+p_min: 0.05     # Minimum noise percentage (e.g., 0.05 for 5%).
+p_max: 0.15     # Maximum noise percentage (e.g., 0.15 for 15%).
+
+# VTK Data Keys
+velocity_key: "U"                   # Key for ground truth velocity in input VTKs.
+pressure_key: "p"                   # Key for ground truth pressure in input VTKs.
+noisy_velocity_key_suffix: "_noisy" # Suffix for noisy velocity field (e.g., "U_noisy").
+predicted_velocity_key: "velocity"  # Key used when saving model's predicted velocity in output VTKs.
+predicted_pressure_key: "pressure"  # Key used when saving normalized pressure in output VTKs.
+
+# Training & Validation Script Specifics
+output_base_dir: "outputs" # Base directory for all run-specific outputs (models, logs, validation VTKs)
+
+# Checkpoint paths for validation scripts (relative to output_base_dir/run_name/models/ or absolute)
+# These are the *filenames* of the checkpoints, not full paths.
+flownet_checkpoint_name: "flownet_best.pth"
+gao_checkpoint_name: "rotflownet_best.pth" # Or "rotflownet_best.pth"
+
+# Device: "cuda", "cpu", or "auto" (tries cuda, falls back to cpu)
+device: "auto"
+
+# Wandb logging
+wandb_project: "CFD_GNN_Refactored" # Project name on W&B
+# wandb_entity: "your_wandb_entity"    # Optional: specify your W&B entity/team
+# wandb_run_name_prefix: "train"       # Optional: prefix for generated W&B run names
+
+# Validation specific settings
+# For histogram validation (e.g. scripts/4_validate_histograms.py)
+# reference_data_root_hist: "outputs/noisy_data/CFD_Ubend_other_val_noisy" # Path to data used as 'real' for JSD
+# predicted_data_root_hist: "outputs/my_run/predictions/FlowNet" # Path to model predictions to compare against reference
+hist_output_root: "outputs/histogram_validation_results" # Base dir for JSD VTK heatmaps from histogram script
+
+# For model inference validation scripts (e.g., scripts/3a_validate_knn.py)
+# val_output_subdir: "validation_predictions" # Subdirectory within run_name for validation VTKs
+
+# Default model names for iterating in scripts, and for output subdirectories
+model_names:
+  - "FlowNet"
+  - "Gao" # Or "RotFlowNet" - ensure consistency with checkpoint names.
+
+# Cases to process for validation (optional, if empty all 'sUbend*' cases found will be processed)
+# Example: cases_to_process: ["sUbend_011", "sUbend_012"]
+cases_to_process: []
+
+# Graph type for training and validation (can be overridden by script arguments)
+# "knn" or "full_mesh"
+default_graph_type: "knn"
+
+# Configuration for graph building, used by data_utils and scripts
+graph_config:
+  k: 12 # For kNN
+  down_n: null # For kNN, null or 0 means no downsampling
+  # velocity_key, noisy_velocity_key_suffix, pressure_key are taken from top-level config
+  # For full_mesh, k and down_n are ignored by vtk_to_fullmesh_graph
+
+# Configuration for loss functions, used by training script
+loss_config:
+  weights:
+    supervised: 1.0
+    divergence: 0.1
+    histogram: 0.05
+  histogram_bins: 64 # Same as nbins above, but specific to loss calculation context
+  # target_divergence: null # or a specific tensor if needed. null implies 0.
+
+# Configuration for on-the-fly validation during training
+validation_during_training:
+  enabled: true
+  frequency: 1 # Validate every N epochs
+  use_noisy_data: true # Whether the validation set itself is noisy (like training)
+  # graph_config and graph_type will typically be same as training, or specified
+  # val_graph_type: "knn" # if different from training
+  # val_graph_config: { k: 12, down_n: null } # if different
+  # val_data_root will be val_root or noisy_val_root based on use_noisy_data
+
+# Configuration for histogram validation performed after training in the main training script
+histogram_validation_after_training:
+  enabled: true
+  # reference_data_root: "outputs/noisy_data/CFD_Ubend_other_val_noisy" # Data to compare against
+  # predicted_data_root: null # Will be generated on the fly using the trained model
+  # output_dir_jsd: "histograms" # Subdirectory in run output for JSD results
+  # velocity_key_ref: "U_noisy"
+  # graph_config_val: from main graph_config
+  # graph_type_val: from main default_graph_type
+  # model_name_prefix will be the current model being trained ("FlowNet" or "Gao")
+  nbins_jsd: 64 # nbins for JSD calculation (can be different from loss nbins)
