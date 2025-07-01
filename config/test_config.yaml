@@ -89,7 +89,7 @@ default_graph_type: "knn"
 # Configuration for graph building, used by data_utils and scripts
 graph_config:
   k: 12 # For kNN
-  down_n: null # For kNN, null or 0 means no downsampling
+  down_n: 20000 # For kNN, null or 0 means no downsampling
   # velocity_key, noisy_velocity_key_suffix, pressure_key are taken from top-level config
   # For full_mesh, k and down_n are ignored by vtk_to_fullmesh_graph
 

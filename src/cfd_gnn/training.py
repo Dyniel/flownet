@@ -124,11 +124,24 @@ def validate_on_pairs(
 
     for path_t0, path_t1 in val_frame_pairs:
         if graph_type == "knn":
+            # Prepare arguments for vtk_to_knn_graph carefully, mapping 'k' from config
+            knn_args = {
+                "k_neighbors": graph_config["k"],  # Map 'k' from config to 'k_neighbors'
+                "downsample_n": graph_config.get("down_n"),
+                "velocity_key": graph_config.get("velocity_key", "U"),
+                "noisy_velocity_key_suffix": graph_config.get("noisy_velocity_key_suffix", "_noisy"),
+            }
             graph_t0 = vtk_to_knn_graph(
-                path_t0, **graph_config, use_noisy_data=use_noisy_data_for_val, device=device
+                path_t0,
+                **knn_args,  # Pass mapped and other relevant args from graph_config
+                use_noisy_data=use_noisy_data_for_val,
+                device=device
             )
             graph_t1 = vtk_to_knn_graph( # Target graph, usually consistent noise setting
-                path_t1, **graph_config, use_noisy_data=use_noisy_data_for_val, device=device
+                path_t1,
+                **knn_args,
+                use_noisy_data=use_noisy_data_for_val,
+                device=device
             )
         elif graph_type == "full_mesh":
              # For full_mesh, graph_config might contain different keys (e.g. velocity_key, pressure_key)
