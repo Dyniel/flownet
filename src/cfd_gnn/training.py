@@ -218,11 +218,12 @@ def validate_on_pairs(
 
         # Flag to track if mse_vorticity_mag has been added for this item
         vorticity_metric_added_for_item = False
+        error_mag = None # Initialize error_mag to None
 
         # Save detailed fields to VTK if requested
         if save_fields_vtk and output_base_dir and points_np is not None: # points_np must exist
             try:
-                error_mag = torch.norm(predicted_vel_t1 - true_vel_t1, dim=1)
+                error_mag = torch.norm(predicted_vel_t1 - true_vel_t1, dim=1) # Assigned here if VTK is saved
                 frame_name_stem = path_t1.stem
                 case_name = path_t1.parent.parent.name
                 epoch_folder_name = f"epoch_{epoch_num}" if epoch_num >= 0 else "final_validation"
@@ -277,13 +278,19 @@ def validate_on_pairs(
 
 
         # Log field comparison image to W&B for the specified sample index
-        if wandb_run and i == log_field_image_sample_idx and graph_t1.pos is not None:
+        if wandb_run and i == log_field_image_sample_idx and points_np is not None: # Check points_np for plotting
+            # Ensure error_mag is defined for plotting.
+            # If not calculated during VTK save (because save_fields_vtk=False or other reasons), calculate it now.
+            if error_mag is None:
+                error_mag = torch.norm(predicted_vel_t1 - true_vel_t1, dim=1)
+
             try:
                 true_vel_mag = true_vel_t1.norm(dim=1).cpu().numpy()
                 pred_vel_mag = predicted_vel_t1.norm(dim=1).cpu().numpy()
-                err_mag_np = error_mag.cpu().numpy() # error_mag computed if save_fields_vtk was true or here
+                # error_mag is now guaranteed to be a tensor if this path is taken.
+                err_mag_np = error_mag.cpu().numpy()
 
-                points_plot = graph_t1.pos.cpu().numpy()
+                points_plot = points_np # Use points_np which is confirmed not None
 
                 # Create a 2D slice (e.g., points near z=mean(z))
                 if points_plot.shape[1] == 3: # Ensure data is 3D for slicing
