@@ -489,6 +489,107 @@ This modular structure allows for flexibility in experimentation and makes it ea
 *   The training script `2_train_model.py` supports a `--data-source [noisy|clean]` flag to select the input dataset type.
 *   To save detailed validation VTK fields (including error and vorticity), set `save_validation_fields_vtk: true` under `validation_during_training:` in your YAML config.
 
+## Usage Examples
+
+All scripts are run from the project root directory.
+
+**1. Prepare Noisy Data:**
+Creates a noisy version of a dataset.
+```bash
+python scripts/1_prepare_noisy_data.py \
+    --source-dir data/CFD_Ubend_other_val \
+    --output-dir outputs/noisy_data/CFD_Ubend_other_val_noisy \
+    --p-min 0.05 \
+    --p-max 0.15 \
+    --overwrite
+```
+*   `--source-dir`: Directory of original CFD cases.
+*   `--output-dir`: Where to save the noisy dataset.
+*   `--p-min`, `--p-max`: Noise percentage range.
+*   `--overwrite`: Overwrite output if it exists.
+*   (See script help `python scripts/1_prepare_noisy_data.py -h` for more options)
+
+**2. Train a Model:**
+Trains FlowNet and/or Gao-RotFlowNet.
+```bash
+# Example: Training with noisy data (default)
+python scripts/2_train_model.py \
+    --config config/my_training_setup.yaml \
+    --run-name flownet_noisy_training \
+    --models-to-train FlowNet \
+    --epochs 150
+
+# Example: Training with clean data
+python scripts/2_train_model.py \
+    --config config/my_training_setup.yaml \
+    --run-name flownet_clean_training \
+    --models-to-train FlowNet \
+    --epochs 150 \
+    --data-source clean
+```
+*   `--config`: Path to your training config (can be omitted to use only defaults + CLI).
+*   `--run-name`: Unique name for this training run; outputs will be in `outputs/<run_name>`.
+*   `--models-to-train`: Specify one or more models (FlowNet, Gao/RotFlowNet).
+*   `--data-source`: `noisy` (default) or `clean`.
+*   (See script help for more options like LR, batch size, etc.)
+
+**3. Validate Model with k-NN Graphs:**
+Validates a trained model checkpoint using k-NN graph representation.
+```bash
+python scripts/3a_validate_knn.py \
+    --model-checkpoint outputs/flownet_noisy_training/models/flownet_best.pth \
+    --model-name FlowNet \
+    --val-data-dir data/CFD_Ubend_other_val \
+    --output-dir outputs/flownet_noisy_training/validation_knn \
+    --k-neighbors 12 \
+    --no-downsample
+```
+*   `--model-checkpoint`: Path to the `.pth` file of the trained model.
+*   `--model-name`: Architecture name (FlowNet, Gao).
+*   `--val-data-dir`: Directory of validation cases.
+*   `--output-dir`: Where to save prediction VTKs and metrics summary.
+
+**4. Validate Model with Full Mesh Graphs:**
+Validates a trained model using graphs derived from mesh cell connectivity.
+```bash
+python scripts/3b_validate_full_mesh.py \
+    --model-checkpoint outputs/flownet_noisy_training/models/flownet_best.pth \
+    --model-name FlowNet \
+    --val-data-dir data/CFD_Ubend_other_val \
+    --output-dir outputs/flownet_noisy_training/validation_fullmesh
+```
+*   (Similar arguments to 3a, but without k-NN specific ones.)
+
+**5. Perform Standalone JSD Histogram Validation:**
+Compares two existing sets of VTK data (e.g., ground truth vs. model predictions).
+```bash
+python scripts/4_validate_histograms.py \
+    --real-data-dir data/CFD_Ubend_other_val_noisy \
+    --pred-data-dir outputs/flownet_noisy_training/validation_knn/FlowNet \
+    --output-dir outputs/flownet_noisy_training/jsd_validation_knn \
+    --velocity-key-real U_noisy \
+    --velocity-key-pred velocity \
+    --model-name-prefix FlowNet_KNN_vs_NoisyReal
+```
+*   `--real-data-dir`: Reference dataset.
+*   `--pred-data-dir`: Predicted dataset (must have same case structure and frame count).
+*   `--output-dir`: For JSD heatmap VTKs.
+*   `--velocity-key-*`: VTK field names for velocity.
+
+**6. Run Combined Validation (Inference + JSD):**
+Orchestrates inference (like 3a or 3b) followed by JSD validation (like 4).
+```bash
+python scripts/5_combined_validation.py \
+    --model-checkpoint outputs/flownet_noisy_training/models/flownet_best.pth \
+    --model-name FlowNet \
+    --val-data-dir data/CFD_Ubend_other_val \
+    --output-dir outputs/flownet_noisy_training/combined_validation_knn_final \
+    --graph-type knn \
+    --k-neighbors 12
+```
+*   `--graph-type`: `knn` or `full_mesh` for the inference part.
+*   This script will create subdirectories within its `--output-dir` for predictions and JSD results.
+
 ## Development Notes
 
 *   **Device Management**: Scripts attempt to use CUDA if available and specified ("auto" or "cuda" in config/CLI). CPU is used as a fallback or if specified.
