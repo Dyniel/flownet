@@ -168,7 +168,6 @@ graph TD
         classDef output fill:#E1FFF0,stroke:#5AA070,stroke-width:2px,color:#000;
         classDef mlp fill:#FFF3E1,stroke:#A0825A,stroke-width:1px,color:#000;
         classDef gnn_step fill:#F0E1FF,stroke:#7D5AA0,stroke-width:1px,color:#000;
-        classDef default color:#000; /* Ensure default text color is black for any unclassed nodes */
 
         class Input_X,Input_EdgeAttr,Input_EdgeIndex input;
         class Output_Preds output;
