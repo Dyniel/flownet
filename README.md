@@ -101,7 +101,7 @@ The GNN models used in this project, `FlowNet` and `RotFlowNet (Gao)`, share a c
 
 ```mermaid
 graph TD
-    subgraph FlowNet / RotFlowNet (Gao) / BaseFlowGNN Architecture
+    subgraph "FlowNet / RotFlowNet (Gao) / BaseFlowGNN Architecture"
 
         direction TB
 
