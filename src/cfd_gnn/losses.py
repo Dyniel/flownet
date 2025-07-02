@@ -201,6 +201,7 @@ def combined_loss(
     divergence_values_pred = calculate_divergence(predicted_velocity, graph_data)
     loss_divergence = (divergence_values_pred - (divergence_target or 0.0)).pow(2).mean()
     individual_losses["divergence"] = loss_divergence
+    individual_losses["divergence_values_pred_for_debug"] = divergence_values_pred # For debugging
 
     # 3. Histogram Loss (on the divergence of the prediction)
     loss_histogram = wasserstein1_histogram_loss(divergence_values_pred, histogram_bins)

@@ -127,6 +127,84 @@ experiments = [
         "graph_config": {"down_n": None},
         "batch_size": 1,
         "models_to_train": ["Gao"],
+    },
+
+    # --- Regularization Experiments (for FlowNet) ---
+    # Assuming regularization_type and regularization_lambda are top-level config keys
+    # (as in default_config.yaml)
+    {
+        "run_name_suffix": "flownet_L1_1e-5",
+        "regularization_type": "L1",
+        "regularization_lambda": 1e-5,
+        "models_to_train": ["FlowNet"],
+    },
+    {
+        "run_name_suffix": "flownet_L1_1e-4",
+        "regularization_type": "L1",
+        "regularization_lambda": 1e-4,
+        "models_to_train": ["FlowNet"],
+    },
+    {
+        "run_name_suffix": "flownet_L1_1e-3",
+        "regularization_type": "L1",
+        "regularization_lambda": 1e-3,
+        "models_to_train": ["FlowNet"],
+    },
+    {
+        "run_name_suffix": "flownet_L2_1e-5",
+        "regularization_type": "L2",
+        "regularization_lambda": 1e-5,
+        "models_to_train": ["FlowNet"],
+    },
+    {
+        "run_name_suffix": "flownet_L2_1e-4",
+        "regularization_type": "L2",
+        "regularization_lambda": 1e-4,
+        "models_to_train": ["FlowNet"],
+    },
+    {
+        "run_name_suffix": "flownet_L2_1e-3",
+        "regularization_type": "L2",
+        "regularization_lambda": 1e-3,
+        "models_to_train": ["FlowNet"],
+    },
+
+    # --- Graph Parameter 'k' (for k-NN) Variations (for FlowNet) ---
+    # Default k is likely 12 (from default_config, assuming test_config follows)
+    {
+        "run_name_suffix": "flownet_k_6",
+        "graph_config": {"k": 6},
+        "models_to_train": ["FlowNet"],
+    },
+    {
+        "run_name_suffix": "flownet_k_18",
+        "graph_config": {"k": 18},
+        "models_to_train": ["FlowNet"],
+    },
+    {
+        "run_name_suffix": "flownet_k_24",
+        "graph_config": {"k": 24},
+        "models_to_train": ["FlowNet"],
+    },
+
+    # --- GNN Internal MLP Layer Variations (for FlowNet) ---
+    # Defaults are typically 2 for encoder_mlp_layers, decoder_mlp_layers, gnn_step_mlp_layers
+    # Let's vary gnn_step_mlp_layers, assuming it's a top-level config picked up by model
+    {
+        "run_name_suffix": "flownet_gnnstepmlp_1",
+        "gnn_step_mlp_layers": 1, # Top-level override
+        "models_to_train": ["FlowNet"],
+    },
+    {
+        "run_name_suffix": "flownet_gnnstepmlp_3",
+        "gnn_step_mlp_layers": 3, # Top-level override
+        "models_to_train": ["FlowNet"],
+    },
+    {
+        "run_name_suffix": "flownet_encmlp_1_decmlp_1", # Example varying encoder/decoder
+        "encoder_mlp_layers": 1, # Top-level override
+        "decoder_mlp_layers": 1, # Top-level override
+        "models_to_train": ["FlowNet"],
     }
 ]
 

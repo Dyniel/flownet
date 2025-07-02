@@ -171,6 +171,14 @@ def vtk_to_knn_graph(
     mesh = meshio.read(str(vtk_path))
     points = mesh.points.astype(np.float32)
 
+    # Check for duplicate points
+    unique_points, counts = np.unique(points, axis=0, return_counts=True)
+    num_duplicates = points.shape[0] - unique_points.shape[0]
+    if num_duplicates > 0:
+        print(f"Warning: Found {num_duplicates} duplicate point coordinates in {vtk_path} out of {points.shape[0]} total points. This might affect divergence calculation.")
+        # Example: print(f"Top 5 duplicate counts: {counts[counts > 1][:5]}")
+
+
     actual_velocity_key = velocity_key
     if use_noisy_data:
         potential_noisy_key = f"{velocity_key}{noisy_velocity_key_suffix}"
@@ -252,6 +260,13 @@ def vtk_to_fullmesh_graph(
     mesh = meshio.read(str(vtk_path))
 
     points = mesh.points.astype(np.float32)
+
+    # Check for duplicate points
+    unique_points_full, counts_full = np.unique(points, axis=0, return_counts=True)
+    num_duplicates_full = points.shape[0] - unique_points_full.shape[0]
+    if num_duplicates_full > 0:
+        print(f"Warning: Found {num_duplicates_full} duplicate point coordinates in {vtk_path} (full_mesh) out of {points.shape[0]} total points.")
+
     if velocity_key not in mesh.point_data:
         raise KeyError(f"Velocity key '{velocity_key}' not found in {vtk_path}")
     velocities = mesh.point_data[velocity_key].astype(np.float32)

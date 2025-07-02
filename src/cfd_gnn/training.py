@@ -111,6 +111,26 @@ def train_single_epoch(
         epoch_aggregated_losses["supervised"] += individual_losses["supervised"].item()
         epoch_aggregated_losses["divergence"] += individual_losses["divergence"].item()
         epoch_aggregated_losses["histogram"] += individual_losses["histogram"].item()
+
+        # DEBUG: Log divergence and prediction stats for the first few batches
+        if num_batches < 2: # Log for first 2 batches of an epoch
+            if "divergence_values_pred_for_debug" in individual_losses:
+                div_pred_train = individual_losses["divergence_values_pred_for_debug"]
+                div_pred_stats_train = {
+                    "min": div_pred_train.min().item(), "max": div_pred_train.max().item(),
+                    "mean": div_pred_train.mean().item(), "std": div_pred_train.std().item(),
+                    "abs_mean": div_pred_train.abs().mean().item()
+                }
+                print(f"DEBUG: Train batch {num_batches}, div_pred stats: {div_pred_stats_train}")
+                print(f"DEBUG: Train batch {num_batches}, individual_losses[\"divergence\"]: {individual_losses['divergence'].item():.12e}") # High precision print
+
+            pred_vel_stats_train = {
+                "min": predicted_vel_t1.min().item(), "max": predicted_vel_t1.max().item(),
+                "mean": predicted_vel_t1.mean().item(), "std": predicted_vel_t1.std().item(),
+                "abs_mean": predicted_vel_t1.abs().mean().item()
+            }
+            print(f"DEBUG: Train batch {num_batches}, pred_vel_t1 stats: {pred_vel_stats_train}")
+
         num_batches += 1
 
     if num_batches > 0:
@@ -227,10 +247,29 @@ def validate_on_pairs(
         # Here, we can compare div_pred to div_true if desired, or just penalize non-zero div_pred.
         # For consistency with original, let's use (div_pred^2).mean()
         div_pred = calculate_divergence(predicted_vel_t1, graph_t0)
+
+        # DEBUG: Log divergence and prediction stats for the first few validation samples
+        if i < 2: # Log for first 2 validation samples
+            div_pred_stats_val = {
+                "min": div_pred.min().item(), "max": div_pred.max().item(),
+                "mean": div_pred.mean().item(), "std": div_pred.std().item(),
+                "abs_mean": div_pred.abs().mean().item()
+            }
+            print(f"DEBUG: Val sample {i} ({path_t0.name if hasattr(path_t0, 'name') else 'N/A'}), div_pred stats: {div_pred_stats_val}")
+
+            pred_vel_stats_val = {
+                "min": predicted_vel_t1.min().item(), "max": predicted_vel_t1.max().item(),
+                "mean": predicted_vel_t1.mean().item(), "std": predicted_vel_t1.std().item(),
+                "abs_mean": predicted_vel_t1.abs().mean().item()
+            }
+            print(f"DEBUG: Val sample {i} ({path_t0.name if hasattr(path_t0, 'name') else 'N/A'}), pred_vel_t1 stats: {pred_vel_stats_val}")
+
         # If we want to compare to divergence of true field (requires true_vel_t1 on graph_t0 structure)
         # div_true = calculate_divergence(true_vel_t1, graph_t0) # This might be problematic if meshes differ slightly
         # mse_div = F.mse_loss(div_pred, div_true).item()
         mse_div = (div_pred ** 2).mean().item()  # Penalize non-zero divergence of prediction
+        if i < 2: # Log for first few validation samples
+            print(f"DEBUG: Val sample {i} ({path_t0.name if hasattr(path_t0, 'name') else 'N/A'}), mse_div: {mse_div:.12e}") # High precision print
         metrics_list["mse_div"].append(mse_div)
 
         # Cosine Similarity
@@ -250,12 +289,13 @@ def validate_on_pairs(
 
         # Flag to track if mse_vorticity_mag has been added for this item
         vorticity_metric_added_for_item = False
-        error_mag = None # Initialize error_mag to None
+        # error_mag = None # Initialize error_mag to None # Removed, will be calculated on demand
 
         # Save detailed fields to VTK if requested
         if save_fields_vtk and output_base_dir and points_np is not None: # points_np must exist
             try:
-                error_mag = torch.norm(predicted_vel_t1 - true_vel_t1, dim=1) # Assigned here if VTK is saved
+                # Calculate error magnitude for VTK saving
+                error_mag_for_vtk = torch.norm(predicted_vel_t1 - true_vel_t1, dim=1)
                 frame_name_stem = path_t1.stem
                 case_name = path_t1.parent.parent.name
                 epoch_folder_name = f"epoch_{epoch_num}" if epoch_num >= 0 else "final_validation"
@@ -270,7 +310,7 @@ def validate_on_pairs(
                 point_data_for_vtk = {
                     "true_velocity": true_vel_np,
                     "predicted_velocity": pred_vel_np,
-                    "velocity_error_magnitude": error_mag.cpu().numpy()
+                    "velocity_error_magnitude": error_mag_for_vtk.cpu().numpy() # Use error_mag_for_vtk
                 }
 
                 # Calculate and add vorticity if points are 3D
@@ -313,16 +353,14 @@ def validate_on_pairs(
 
         # Log field comparison image to W&B for the specified sample index
         if wandb_run and i == log_field_image_sample_idx and points_np is not None: # Check points_np for plotting
-            # Ensure error_mag is defined for plotting.
-            # If not calculated during VTK save (because save_fields_vtk=False or other reasons), calculate it now.
-            if error_mag is None:
-                error_mag = torch.norm(predicted_vel_t1 - true_vel_t1, dim=1)
-
             try:
+                # Calculate error_mag specifically for this W&B log.
+                # This ensures error_mag_for_plot is defined in this scope.
+                error_mag_for_plot = torch.norm(predicted_vel_t1 - true_vel_t1, dim=1)
+
                 true_vel_mag = true_vel_t1.norm(dim=1).cpu().numpy()
                 pred_vel_mag = predicted_vel_t1.norm(dim=1).cpu().numpy()
-                # error_mag is now guaranteed to be a tensor if this path is taken.
-                err_mag_np = error_mag.cpu().numpy()
+                err_mag_np = error_mag_for_plot.cpu().numpy() # Use the locally calculated one for plotting
 
 
                 points_plot = points_np # Use points_np which is confirmed not None
