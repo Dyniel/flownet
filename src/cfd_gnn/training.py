@@ -111,6 +111,25 @@ def train_single_epoch(
         epoch_aggregated_losses["supervised"] += individual_losses["supervised"].item()
         epoch_aggregated_losses["divergence"] += individual_losses["divergence"].item()
         epoch_aggregated_losses["histogram"] += individual_losses["histogram"].item()
+
+        # DEBUG: Log divergence and prediction stats for the first few batches
+        if num_batches < 2: # Log for first 2 batches of an epoch
+            if "divergence_values_pred_for_debug" in individual_losses:
+                div_pred_train = individual_losses["divergence_values_pred_for_debug"]
+                div_pred_stats_train = {
+                    "min": div_pred_train.min().item(), "max": div_pred_train.max().item(),
+                    "mean": div_pred_train.mean().item(), "std": div_pred_train.std().item(),
+                    "abs_mean": div_pred_train.abs().mean().item()
+                }
+                print(f"DEBUG: Train batch {num_batches}, div_pred stats: {div_pred_stats_train}")
+
+            pred_vel_stats_train = {
+                "min": predicted_vel_t1.min().item(), "max": predicted_vel_t1.max().item(),
+                "mean": predicted_vel_t1.mean().item(), "std": predicted_vel_t1.std().item(),
+                "abs_mean": predicted_vel_t1.abs().mean().item()
+            }
+            print(f"DEBUG: Train batch {num_batches}, pred_vel_t1 stats: {pred_vel_stats_train}")
+
         num_batches += 1
 
     if num_batches > 0:
@@ -227,6 +246,23 @@ def validate_on_pairs(
         # Here, we can compare div_pred to div_true if desired, or just penalize non-zero div_pred.
         # For consistency with original, let's use (div_pred^2).mean()
         div_pred = calculate_divergence(predicted_vel_t1, graph_t0)
+
+        # DEBUG: Log divergence and prediction stats for the first few validation samples
+        if i < 2: # Log for first 2 validation samples
+            div_pred_stats_val = {
+                "min": div_pred.min().item(), "max": div_pred.max().item(),
+                "mean": div_pred.mean().item(), "std": div_pred.std().item(),
+                "abs_mean": div_pred.abs().mean().item()
+            }
+            print(f"DEBUG: Val sample {i} ({path_t0.name if hasattr(path_t0, 'name') else 'N/A'}), div_pred stats: {div_pred_stats_val}")
+
+            pred_vel_stats_val = {
+                "min": predicted_vel_t1.min().item(), "max": predicted_vel_t1.max().item(),
+                "mean": predicted_vel_t1.mean().item(), "std": predicted_vel_t1.std().item(),
+                "abs_mean": predicted_vel_t1.abs().mean().item()
+            }
+            print(f"DEBUG: Val sample {i} ({path_t0.name if hasattr(path_t0, 'name') else 'N/A'}), pred_vel_t1 stats: {pred_vel_stats_val}")
+
         # If we want to compare to divergence of true field (requires true_vel_t1 on graph_t0 structure)
         # div_true = calculate_divergence(true_vel_t1, graph_t0) # This might be problematic if meshes differ slightly
         # mse_div = F.mse_loss(div_pred, div_true).item()

@@ -7,3 +7,4 @@ meshio
 matplotlib
 PyYAML
 wandb
+pyvista
