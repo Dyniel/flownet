@@ -124,6 +124,7 @@ def train_single_epoch(
                 print(f"DEBUG: Train batch {num_batches}, div_pred stats: {div_pred_stats_train}")
                 print(f"DEBUG: Train batch {num_batches}, individual_losses[\"divergence\"]: {individual_losses['divergence'].item():.12e}") # High precision print
 
+
             pred_vel_stats_train = {
                 "min": predicted_vel_t1.min().item(), "max": predicted_vel_t1.max().item(),
                 "mean": predicted_vel_t1.mean().item(), "std": predicted_vel_t1.std().item(),
