@@ -28,9 +28,9 @@ This diagram shows the main building blocks of the project and their interconnec
 graph LR
     subgraph UserInput[Input Data and Configuration]
         direction LR
-        rawData[fa:fa-database Raw CFD Data (.vtk series) in data/]
-        customConfig[fa:fa-file-code Custom YAML Configs in config/]
-        defaultConfig[fa:fa-file-alt Default Config (default_config.yaml) in config/]
+        rawData["fa:fa-database Raw CFD Data (.vtk series) in data/"]
+        customConfig["fa:fa-file-code Custom YAML Configs in config/"]
+        defaultConfig["fa:fa-file-alt Default Config (default_config.yaml) in config/"]
     end
 
     subgraph CoreLogic[Core Library (src/cfd_gnn)]
