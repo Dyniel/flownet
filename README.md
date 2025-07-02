@@ -173,10 +173,12 @@ graph TD
         class Output_Preds output;
         class NodeEncoder,EdgeEncoder,NodeDecoder mlp;
         class GNNStep1,GNNStepN,GNNStepLast gnn_step;
-        class EdgeMLP,NodeMLP mlp; /* EdgeMLP and NodeMLP within GNNStep_Detailed also use mlp class */
-        class Aggregator gnn_step; /* Aggregator within GNNStep_Detailed also uses gnn_step class */
+        %% Apply 'mlp' class to EdgeMLP and NodeMLP nodes within the detailed step view
+        class EdgeMLP,NodeMLP mlp;
+        %% Apply 'gnn_step' class to the Aggregator node within the detailed step view
+        class Aggregator gnn_step;
 
-        style GNNStep_Detailed fill:#ECECEC,stroke:#666,stroke-width:2px; /* Removed opacity for better text visibility */
+        style GNNStep_Detailed fill:#ECECEC,stroke:#666,stroke-width:2px; %% Removed opacity for better text visibility
     end
 ```
 
