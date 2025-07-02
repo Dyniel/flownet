@@ -11,86 +11,123 @@ TEMP_CONFIG_NAME = "temp_experiment_config.yaml"
 # Define the training script path
 TRAIN_SCRIPT_PATH = "scripts/2_train_model.py"
 # Default number of epochs for experiments
-DEFAULT_EPOCHS = 50
+DEFAULT_EPOCHS = 75 # Increased default epochs
 
 # --- Define your experiments here ---
 # Each dictionary in this list represents one experiment.
 # Parameters specified here will override those in the BASE_CONFIG_PATH.
 # Add a 'run_name_suffix' to easily identify experiments in W&B.
+# All experiments will use FlowNet by default as per test_config.yaml
+# We can specify models_to_train: ["FlowNet"] or ["Gao"] if needed.
+
 experiments = [
+    # Baseline (uses defaults from test_config.yaml, with DEFAULT_EPOCHS)
     {
-        "run_name_suffix": "baseline",
-        # Uses all defaults from BASE_CONFIG_PATH, just sets epochs
+        "run_name_suffix": "flownet_baseline",
+        "models_to_train": ["FlowNet"],
+    },
+
+    # Learning Rate Variations (for FlowNet)
+    {
+        "run_name_suffix": "flownet_lr_1e-5",
+        "lr": 1.0e-5, # Overrides top-level lr
+        "models_to_train": ["FlowNet"],
     },
     {
-        "run_name_suffix": "low_lr",
-        "optimizer_settings": {
-            "lr": 1.0e-5,
-        },
+        "run_name_suffix": "flownet_lr_5e-5",
+        "lr": 5.0e-5,
+        "models_to_train": ["FlowNet"],
+    },
+    # lr: 2.0e-4 is default in test_config
+    {
+        "run_name_suffix": "flownet_lr_5e-4",
+        "lr": 5.0e-4,
+        "models_to_train": ["FlowNet"],
+    },
+
+    # Hidden Dimension Variations (for FlowNet)
+    {
+        "run_name_suffix": "flownet_hdim_64",
+        "model_config": {"h_dim": 64}, # test_config default is 128
+        "models_to_train": ["FlowNet"],
     },
     {
-        "run_name_suffix": "high_lr",
-        "optimizer_settings": {
-            "lr": 5.0e-4,
-        },
+        "run_name_suffix": "flownet_hdim_256",
+        "model_config": {"h_dim": 256},
+        "models_to_train": ["FlowNet"],
+    },
+
+    # Number of Layers Variations (for FlowNet)
+    {
+        "run_name_suffix": "flownet_layers_3",
+        "model_config": {"layers": 3}, # test_config default is 5
+        "models_to_train": ["FlowNet"],
     },
     {
-        "run_name_suffix": "more_hidden_dim",
-        "model_config": { # Assuming model_config is a top-level key in your YAML
-            "h_dim": 128, # Default in test_config is 64
-        },
+        "run_name_suffix": "flownet_layers_6",
+        "model_config": {"layers": 6},
+        "models_to_train": ["FlowNet"],
+    },
+
+    # Loss Weights Variations (for FlowNet)
+    # Baseline loss weights from test_config.yaml: {"supervised": 1.0, "divergence": 0.1, "histogram": 0.05}
+    {
+        "run_name_suffix": "flownet_loss_heavy_div",
+        "loss_config": {"weights": {"supervised": 0.8, "divergence": 0.2, "histogram": 0.0}},
+        "models_to_train": ["FlowNet"],
     },
     {
-        "run_name_suffix": "fewer_layers",
-        "model_config": {
-            "layers": 3, # Default in test_config is 4
-        },
+        "run_name_suffix": "flownet_loss_balanced",
+        "loss_config": {"weights": {"supervised": 0.7, "divergence": 0.15, "histogram": 0.15}},
+        "models_to_train": ["FlowNet"],
+    },
+
+    # Graph Downsampling Variations (for FlowNet)
+    # graph_config.down_n default is 20000 in test_config.yaml
+    {
+        "run_name_suffix": "flownet_downN_10k",
+        "graph_config": {"down_n": 10000},
+        "models_to_train": ["FlowNet"],
     },
     {
-        "run_name_suffix": "more_layers",
-        "model_config": {
-            "layers": 5,
-        },
+        "run_name_suffix": "flownet_downN_none_b2", # No downsampling, smaller batch
+        "graph_config": {"down_n": None}, # null in YAML often becomes None in Python
+        "batch_size": 2, # Overrides top-level batch_size
+        "models_to_train": ["FlowNet"],
     },
     {
-        "run_name_suffix": "loss_weights_v1",
-        "training_settings": { # Assuming training_settings is a top-level key
-            "loss_weights": {
-                "supervised": 0.7,
-                "divergence": 0.2,
-                "histogram": 0.1,
-            }
-        },
+        "run_name_suffix": "flownet_downN_none_b1", # No downsampling, smallest batch
+        "graph_config": {"down_n": None},
+        "batch_size": 1,
+        "models_to_train": ["FlowNet"],
+    },
+
+    # Batch Size Variation (with default down_n=20000) (for FlowNet)
+    # batch_size default is 4 in test_config.yaml
+    {
+        "run_name_suffix": "flownet_batch_2",
+        "batch_size": 2,
+        "models_to_train": ["FlowNet"],
+    },
+
+    # Example for Gao model (can be expanded similarly)
+    {
+        "run_name_suffix": "gao_baseline",
+        "models_to_train": ["Gao"],
+        # Uses defaults from test_config for Gao, if specific Gao configs are present
+        # or general model_config if not.
     },
     {
-        "run_name_suffix": "loss_weights_v2_no_hist",
-        "training_settings": {
-            "loss_weights": {
-                "supervised": 0.8,
-                "divergence": 0.2,
-                "histogram": 0.0, # Disable histogram loss
-            }
-        },
+        "run_name_suffix": "gao_lr_1e-5",
+        "lr": 1.0e-5,
+        "models_to_train": ["Gao"],
     },
     {
-        "run_name_suffix": "loss_weights_v3_heavy_div",
-        "training_settings": {
-            "loss_weights": {
-                "supervised": 0.5,
-                "divergence": 0.4, # Emphasize divergence
-                "histogram": 0.1,
-            }
-        },
-    },
-    # --- Add more experiments below ---
-    # Example for a different model type (if applicable, adjust keys as needed)
-    # {
-    #     "run_name_suffix": "other_model_type",
-    #     "model_name": "OtherModelName", # Or whatever key controls the model type
-    #     "model_config": { # Config specific to OtherModelName
-    #         "some_param": "value"
-    #     }
-    # },
+        "run_name_suffix": "gao_downN_none_b1",
+        "graph_config": {"down_n": None},
+        "batch_size": 1,
+        "models_to_train": ["Gao"],
+    }
 ]
 
 def deep_update(source, overrides):
