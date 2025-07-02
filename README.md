@@ -33,40 +33,40 @@ graph LR
         defaultConfig["fa:fa-file-alt Default Config (default_config.yaml) in config/"]
     end
 
-    subgraph CoreLogic[Core Library (src/cfd_gnn)]
+    subgraph CoreLogic["Core Library (src/cfd_gnn)"]
         direction TB
-        dataUtils[fa:fa-cogs data_utils.py<br>(Data Loading, Noise, Graph Building, Dataset)]
-        models[fa:fa-brain models.py<br>(GNN Architectures: FlowNet, Gao)]
-        losses[fa:fa-calculator losses.py<br>(Loss Functions)]
-        training[fa:fa-person-chalkboard training.py<br>(Training & Validation Loops)]
-        metrics[fa:fa-chart-line metrics.py<br>(Evaluation Metrics)]
-        validation[fa:fa-check-double validation.py<br>(Standalone Validation Utils)]
-        utils[fa:fa-tools utils.py<br>(Helpers: Config, Seed, W&B, VTK I/O)]
+        dataUtils["fa:fa-cogs data_utils.py<br>(Data Loading, Noise, Graph Building, Dataset)"]
+        models["fa:fa-brain models.py<br>(GNN Architectures: FlowNet, Gao)"]
+        losses["fa:fa-calculator losses.py<br>(Loss Functions)"]
+        training["fa:fa-person-chalkboard training.py<br>(Training & Validation Loops)"]
+        metrics["fa:fa-chart-line metrics.py<br>(Evaluation Metrics)"]
+        validation["fa:fa-check-double validation.py<br>(Standalone Validation Utils)"]
+        utils["fa:fa-tools utils.py<br>(Helpers: Config, Seed, W&B, VTK I/O)"]
     end
 
-    subgraph Scripts[Executable Scripts (scripts/)]
+    subgraph Scripts["Executable Scripts (scripts/)"]
         direction TB
-        script1[fa:fa-magic 1_prepare_noisy_data.py]
-        script2[fa:fa-play-circle 2_train_model.py]
-        script3a[fa:fa-project-diagram 3a_validate_knn.py]
-        script3b[fa:fa-network-wired 3b_validate_full_mesh.py]
-        script4[fa:fa-image 4_validate_histograms.py]
-        script5[fa:fa-sitemap 5_combined_validation.py]
-        scriptRunExp[fa:fa-rocket run_experiments.py]
+        script1["fa:fa-magic 1_prepare_noisy_data.py"]
+        script2["fa:fa-play-circle 2_train_model.py"]
+        script3a["fa:fa-project-diagram 3a_validate_knn.py"]
+        script3b["fa:fa-network-wired 3b_validate_full_mesh.py"]
+        script4["fa:fa-image 4_validate_histograms.py"]
+        script5["fa:fa-sitemap 5_combined_validation.py"]
+        scriptRunExp["fa:fa-rocket run_experiments.py"]
     end
 
-    subgraph Outputs[Outputs and Artifacts (outputs/)]
+    subgraph Outputs["Outputs and Artifacts (outputs/)"]
         direction LR
-        noisyData[fa:fa-database Noisy CFD Data in outputs/noisy_data/]
-        runOutputs[fa:fa-folder-open Per-Run Outputs in outputs/RUN_NAME/]
-        subgraph RunSpecific[Inside outputs/RUN_NAME/]
+        noisyData["fa:fa-database Noisy CFD Data in outputs/noisy_data/"]
+        runOutputs["fa:fa-folder-open Per-Run Outputs in outputs/RUN_NAME/"]
+        subgraph RunSpecific["Inside outputs/RUN_NAME/"]
             direction TB
-            trainedModels[fa:fa-save Saved Models (.pth)]
-            logFiles[fa:fa-file-csv Log Files (.csv)]
-            predictionVTKs[fa:fa-file-export Predicted VTKs]
-            jsdHeatmaps[fa:fa-map JSD Heatmaps]
+            trainedModels["fa:fa-save Saved Models (.pth)"]
+            logFiles["fa:fa-file-csv Log Files (.csv)"]
+            predictionVTKs["fa:fa-file-export Predicted VTKs"]
+            jsdHeatmaps["fa:fa-map JSD Heatmaps"]
         end
-        wandb[fa:fa-cloud Weights & Biases (External)]
+        wandb["fa:fa-cloud Weights & Biases (External)"]
     end
 
     %% Connections
