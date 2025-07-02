@@ -95,6 +95,89 @@ graph LR
     runOutputs --> wandb
 ```
 
+### Model Architectures
+
+The GNN models used in this project, `FlowNet` and `RotFlowNet (Gao)`, share a common underlying architecture defined by the `BaseFlowGNN` class. The main components and data flow are illustrated below. Differences between `FlowNet` and `RotFlowNet (Gao)` typically arise from the specific input features provided during graph construction (e.g., standard Cartesian coordinates for `FlowNet` vs. potentially cylindrical or augmented features for `RotFlowNet`) rather than from a structural difference in the neural network itself.
+
+```mermaid
+graph TD
+    subgraph FlowNet / RotFlowNet (Gao) / BaseFlowGNN Architecture
+
+        direction TB
+
+        %% Inputs
+        Input_X["Input Node Features (data.x)"]
+        Input_EdgeAttr["Input Edge Features (data.edge_attr)"]
+        Input_EdgeIndex["Input Edge Connectivity (data.edge_index)"]
+
+        %% Encoders
+        subgraph Encoders
+            direction TB
+            NodeEncoder["Node Encoder (MLP)<br>[node_in_features -> hidden_dim]"]
+            EdgeEncoder["Edge Encoder (MLP)<br>[edge_in_features -> hidden_dim]"]
+        end
+
+        %% GNN Core / Processor
+        subgraph GNN_Processor["GNN Processor (N x GNNStep Layers)"]
+            direction TB
+            GNNStep1["GNNStep 1 (Message Passing)"]
+            GNNStepN["... (repeat N times) ..."]
+            GNNStepLast["GNNStep N (Message Passing)"]
+
+            %% Detailed GNNStep (conceptual representation for one step)
+            subgraph GNNStep_Detailed ["GNNStep k (Conceptual Detail)"]
+                direction TB
+                style GNNStep_Detailed fill:#f9f,stroke:#333,stroke-width:2px,opacity:0.5
+                EdgeMLP["Edge MLP<br>[3*hidden_dim -> hidden_dim]<br>(src_node_feat, dst_node_feat, edge_feat)"]
+                Aggregator["Message Aggregation<br>(scatter_add)"]
+                NodeMLP["Node MLP<br>[2*hidden_dim -> hidden_dim]<br>(current_node_feat, aggr_msgs)"]
+                EdgeMLP --> Aggregator
+                Aggregator --> NodeMLP
+            end
+
+            %% Simplified flow for overall GNN Processor
+            GNNStep1 --> GNNStepN
+            GNNStepN --> GNNStepLast
+        end
+
+        %% Decoder
+        subgraph Decoder
+            direction TB
+            NodeDecoder["Node Decoder (MLP)<br>[hidden_dim -> node_out_features]"]
+        end
+
+        %% Output
+        Output_Preds["Output Node Predictions"]
+
+        %% Connections
+        Input_X --> NodeEncoder
+        Input_EdgeAttr --> EdgeEncoder
+
+        NodeEncoder -- "Encoded Node Features (h_node)" --> GNNStep1
+        EdgeEncoder -- "Encoded Edge Features (h_edge)" --> GNNStep1
+        Input_EdgeIndex -- "Edge Connectivity" --> GNNStep1
+
+        GNNStep1 -- "Updated h_node" --> GNNStepN
+        GNNStepN -- "Updated h_node" --> GNNStepLast
+
+        GNNStepLast -- "Final h_node" --> NodeDecoder
+        NodeDecoder --> Output_Preds
+
+        %% Styling (optional)
+        classDef input fill:#lightgrey,stroke:#333,stroke-width:2px;
+        classDef output fill:#lightblue,stroke:#333,stroke-width:2px;
+        classDef mlp fill:#e6ffe6,stroke:#333,stroke-width:1px;
+        classDef gnn_step fill:#fff0e6,stroke:#333,stroke-width:1px;
+
+        class Input_X,Input_EdgeAttr,Input_EdgeIndex input;
+        class Output_Preds output;
+        class NodeEncoder,EdgeEncoder,NodeDecoder mlp;
+        class GNNStep1,GNNStepN,GNNStepLast gnn_step;
+        class EdgeMLP,NodeMLP mlp;
+        class Aggregator gnn_step;
+    end
+```
+
 ### Workflow
 
 This diagram illustrates the typical sequence of steps performed when working with the project, from data preparation to results analysis.
