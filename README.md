@@ -106,31 +106,31 @@ graph TD
         direction TB
 
         %% Inputs
-        Input_X["Input Node Features (data.x)"]
-        Input_EdgeAttr["Input Edge Features (data.edge_attr)"]
-        Input_EdgeIndex["Input Edge Connectivity (data.edge_index)"]
+        Input_X["Input Node Feats<br>(data.x)"]
+        Input_EdgeAttr["Input Edge Feats<br>(data.edge_attr)"]
+        Input_EdgeIndex["Edge Connectivity<br>(data.edge_index)"]
 
         %% Encoders
         subgraph Encoders
             direction TB
-            NodeEncoder["Node Encoder (MLP)<br>[node_in_features -> hidden_dim]"]
-            EdgeEncoder["Edge Encoder (MLP)<br>[edge_in_features -> hidden_dim]"]
+            NodeEncoder["Node Encoder (MLP)<br>[node_in -> hid_dim]"]
+            EdgeEncoder["Edge Encoder (MLP)<br>[edge_in -> hid_dim]"]
         end
 
         %% GNN Core / Processor
         subgraph GNN_Processor["GNN Processor (N x GNNStep Layers)"]
             direction TB
-            GNNStep1["GNNStep 1 (Message Passing)"]
+            GNNStep1["GNNStep 1<br>(Message Passing)"]
             GNNStepN["... (repeat N times) ..."]
-            GNNStepLast["GNNStep N (Message Passing)"]
+            GNNStepLast["GNNStep N<br>(Message Passing)"]
 
             %% Detailed GNNStep (conceptual representation for one step)
             subgraph GNNStep_Detailed ["GNNStep k (Conceptual Detail)"]
                 direction TB
                 style GNNStep_Detailed fill:#f9f,stroke:#333,stroke-width:2px,opacity:0.5
-                EdgeMLP["Edge MLP<br>[3*hidden_dim -> hidden_dim]<br>(src_node_feat, dst_node_feat, edge_feat)"]
-                Aggregator["Message Aggregation<br>(scatter_add)"]
-                NodeMLP["Node MLP<br>[2*hidden_dim -> hidden_dim]<br>(current_node_feat, aggr_msgs)"]
+                EdgeMLP["Edge MLP<br>[3*hid_dim -> hid_dim]<br>(src, dst, edge feats)"]
+                Aggregator["Msg Aggregation<br>(scatter_add)"]
+                NodeMLP["Node MLP<br>[2*hid_dim -> hid_dim]<br>(curr_node, aggr_msgs)"]
                 EdgeMLP --> Aggregator
                 Aggregator --> NodeMLP
             end
@@ -143,19 +143,19 @@ graph TD
         %% Decoder
         subgraph Decoder
             direction TB
-            NodeDecoder["Node Decoder (MLP)<br>[hidden_dim -> node_out_features]"]
+            NodeDecoder["Node Decoder (MLP)<br>[hid_dim -> node_out]"]
         end
 
         %% Output
-        Output_Preds["Output Node Predictions"]
+        Output_Preds["Output Node<br>Predictions"]
 
         %% Connections
         Input_X --> NodeEncoder
         Input_EdgeAttr --> EdgeEncoder
 
-        NodeEncoder -- "Encoded Node Features (h_node)" --> GNNStep1
-        EdgeEncoder -- "Encoded Edge Features (h_edge)" --> GNNStep1
-        Input_EdgeIndex -- "Edge Connectivity" --> GNNStep1
+        NodeEncoder -- "Enc. Node Feats<br>(h_node)" --> GNNStep1
+        EdgeEncoder -- "Enc. Edge Feats<br>(h_edge)" --> GNNStep1
+        Input_EdgeIndex -- "Connectivity" --> GNNStep1
 
         GNNStep1 -- "Updated h_node" --> GNNStepN
         GNNStepN -- "Updated h_node" --> GNNStepLast
@@ -163,18 +163,21 @@ graph TD
         GNNStepLast -- "Final h_node" --> NodeDecoder
         NodeDecoder --> Output_Preds
 
-        %% Styling (optional)
-        classDef input fill:#lightgrey,stroke:#333,stroke-width:2px;
-        classDef output fill:#lightblue,stroke:#333,stroke-width:2px;
-        classDef mlp fill:#e6ffe6,stroke:#333,stroke-width:1px;
-        classDef gnn_step fill:#fff0e6,stroke:#333,stroke-width:1px;
+        %% Styling - Improved Readability
+        classDef input fill:#E1EFFF,stroke:#5A7D9A,stroke-width:2px,color:#000;
+        classDef output fill:#E1FFF0,stroke:#5AA070,stroke-width:2px,color:#000;
+        classDef mlp fill:#FFF3E1,stroke:#A0825A,stroke-width:1px,color:#000;
+        classDef gnn_step fill:#F0E1FF,stroke:#7D5AA0,stroke-width:1px,color:#000;
+        classDef default color:#000; /* Ensure default text color is black for any unclassed nodes */
 
         class Input_X,Input_EdgeAttr,Input_EdgeIndex input;
         class Output_Preds output;
         class NodeEncoder,EdgeEncoder,NodeDecoder mlp;
         class GNNStep1,GNNStepN,GNNStepLast gnn_step;
-        class EdgeMLP,NodeMLP mlp;
-        class Aggregator gnn_step;
+        class EdgeMLP,NodeMLP mlp; /* EdgeMLP and NodeMLP within GNNStep_Detailed also use mlp class */
+        class Aggregator gnn_step; /* Aggregator within GNNStep_Detailed also uses gnn_step class */
+
+        style GNNStep_Detailed fill:#ECECEC,stroke:#666,stroke-width:2px; /* Removed opacity for better text visibility */
     end
 ```
 
