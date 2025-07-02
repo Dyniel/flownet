@@ -26,6 +26,165 @@ from scipy.spatial import Delaunay
 import io
 import wandb
 
+# New helper function for plotting:
+def _log_and_save_field_plots(
+    points_np: np.ndarray,
+    true_vel_tensor: torch.Tensor,
+    pred_vel_tensor: torch.Tensor,
+    error_mag_tensor: torch.Tensor,
+    pred_div_tensor: torch.Tensor,
+    # true_vort_mag_np: np.ndarray | None, # Optional, if we want to plot true vorticity
+    pred_vort_mag_np: np.ndarray | None,
+    path_t1: Path, # For naming output files
+    epoch_num: int,
+    current_sample_global_idx: int, # Index of the sample in the validation dataloader
+    output_base_dir: str | Path | None,
+    wandb_run: wandb.sdk.wandb_run.Run | None,
+    model_name: str,
+    # base_filename_stem: str, # path_t1.stem can be used directly
+    simple_plot: bool = False # Flag for the fallback simpler plot
+):
+    """
+    Generates, saves, and logs detailed field comparison plots for a validation sample.
+    Plots include velocity magnitudes (true, pred, error), predicted divergence,
+    and predicted vorticity magnitude.
+    """
+    if not (wandb_run or output_base_dir): # No place to log or save
+        return
+    if points_np is None or points_np.shape[0] < 3: # Need at least 3 points for triangulation
+        print(f"Warning: Not enough points ({points_np.shape[0] if points_np is not None else 'None'}) for sample {current_sample_global_idx} from {path_t1.name} to generate field plot.")
+        return
+
+    # Convert tensors to numpy for plotting
+    true_vel_mag_np = true_vel_tensor.norm(dim=1).cpu().numpy()
+    pred_vel_mag_np = pred_vel_tensor.norm(dim=1).cpu().numpy()
+    error_mag_np = error_mag_tensor.cpu().numpy()
+    pred_div_np = pred_div_tensor.cpu().numpy() if pred_div_tensor is not None else None # Handle optional div
+    # pred_vort_mag_np is already numpy or None
+
+    # Determine slice for 2D plotting (e.g., points near z=mean(z) or just XY if 2D)
+    slice_points_2d = None
+    fields_to_plot_on_slice = {}
+
+    is_3d_data = points_np.shape[1] == 3
+
+    if is_3d_data:
+        mean_z = np.mean(points_np[:, 2])
+        z_extent = np.max(points_np[:, 2]) - np.min(points_np[:, 2])
+        thickness = 0.05 * z_extent if z_extent > 1e-6 else 0.01
+        slice_indices = np.where(np.abs(points_np[:, 2] - mean_z) < thickness / 2.0)[0]
+
+        if len(slice_indices) < 3:
+            slice_points_2d = points_np[:, :2]
+            slice_indices = np.arange(points_np.shape[0])
+        else:
+            slice_points_2d = points_np[slice_indices, :2]
+    else: # Data is already 2D
+        slice_points_2d = points_np
+        slice_indices = np.arange(points_np.shape[0])
+
+    if len(slice_indices) < 3:
+        print(f"Warning: Not enough points in final slice ({len(slice_indices)} points) for sample {current_sample_global_idx} from {path_t1.name}. Skipping plot generation.")
+        return
+
+    # Populate fields for plotting
+    fields_to_plot_on_slice["True Vel Mag"] = true_vel_mag_np[slice_indices]
+    fields_to_plot_on_slice["Pred Vel Mag"] = pred_vel_mag_np[slice_indices]
+    fields_to_plot_on_slice["Error Mag"] = error_mag_np[slice_indices]
+
+    if not simple_plot:
+        if pred_div_np is not None:
+            fields_to_plot_on_slice["Pred Divergence"] = pred_div_np[slice_indices]
+        if pred_vort_mag_np is not None and is_3d_data:
+             if pred_vort_mag_np.shape[0] == points_np.shape[0]:
+                fields_to_plot_on_slice["Pred Vorticity Mag"] = pred_vort_mag_np[slice_indices]
+             else:
+                print(f"Warning: Vorticity array shape mismatch for sample {current_sample_global_idx} from {path_t1.name}. Skipping vorticity plot.")
+
+    num_subplots = len(fields_to_plot_on_slice)
+    if num_subplots == 0:
+        return
+
+    if simple_plot and "Error Mag" not in fields_to_plot_on_slice: # Ensure simple plot has at least error
+        if "Pred Vel Mag" in fields_to_plot_on_slice : del fields_to_plot_on_slice["Pred Vel Mag"] # make space
+        if "True Vel Mag" in fields_to_plot_on_slice : del fields_to_plot_on_slice["True Vel Mag"]
+        num_subplots = len(fields_to_plot_on_slice)
+
+
+    if num_subplots <= 3 :
+        fig_rows, fig_cols = 1, num_subplots
+        figsize = (6 * num_subplots, 5)
+    else:
+        fig_cols = 3
+        fig_rows = (num_subplots + fig_cols -1) // fig_cols
+        figsize = (18, 5 * fig_rows) if fig_rows > 0 else (18,5)
+
+
+    fig, axes = plt.subplots(fig_rows, fig_cols, figsize=figsize, squeeze=False)
+    axes = axes.flatten()
+
+    plot_successful = False
+    try:
+        tri = Delaunay(slice_points_2d)
+
+        for ax_idx, (title, data_field) in enumerate(fields_to_plot_on_slice.items()):
+            ax = axes[ax_idx]
+            cmap = "jet"
+            if "Error" in title: cmap = "Reds"
+            elif "Divergence" in title: cmap = "coolwarm"
+            elif "Vorticity" in title: cmap = "viridis"
+
+            contour = ax.tricontourf(slice_points_2d[:,0], slice_points_2d[:,1], tri.simplices, data_field, levels=14, cmap=cmap)
+            fig.colorbar(contour, ax=ax)
+            ax.set_title(title)
+            ax.set_xlabel("X")
+            ax.set_ylabel("Y")
+            ax.axis('equal')
+
+        for ax_idx in range(num_subplots, len(axes)):
+            axes[ax_idx].set_visible(False)
+
+        plot_title_prefix = f"Epoch {epoch_num}" if epoch_num >=0 else "FinalVal"
+        fig.suptitle(f"{model_name} - {plot_title_prefix} - Sample {current_sample_global_idx} ({path_t1.stem}) - {'Z-slice' if is_3d_data else '2D'} Fields", fontsize=16)
+        fig.tight_layout(rect=[0, 0, 1, 0.96])
+        plot_successful = True
+
+    except Exception as e_plot:
+        print(f"Warning: Failed to generate tricontourf plot for sample {current_sample_global_idx} from {path_t1.name}: {e_plot}")
+        if fig is not None: plt.close(fig)
+        return
+
+    if plot_successful:
+        if output_base_dir:
+            try:
+                case_name = path_t1.parent.parent.name
+                epoch_folder_name = f"epoch_{epoch_num}" if epoch_num >= 0 else "final_validation_plots"
+
+                plot_output_dir = Path(output_base_dir) / "validation_plots" / model_name / epoch_folder_name / case_name
+                plot_output_dir.mkdir(parents=True, exist_ok=True)
+
+                base_filename = path_t1.stem
+                plot_suffix = "_simple_comparison.png" if simple_plot else "_detailed_fields_comparison.png"
+                plot_file_path = plot_output_dir / f"{base_filename}_sample{current_sample_global_idx}{plot_suffix}"
+
+                plt.savefig(plot_file_path)
+                # print(f"  Saved field plot to {plot_file_path}") # Reduced verbosity
+            except Exception as e_save:
+                print(f"Warning: Could not save local field plot for sample {current_sample_global_idx} from {path_t1.name}: {e_save}")
+
+        if wandb_run:
+            try:
+                buf = io.BytesIO()
+                plt.savefig(buf, format='png')
+                buf.seek(0)
+                log_key_suffix = "_simple" if simple_plot else "_detailed"
+                wandb_run.log({f"{model_name}/Validation_Fields_Epoch{epoch_num}_Sample{current_sample_global_idx}{log_key_suffix}": wandb.Image(buf)})
+                buf.close()
+            except Exception as e_wandb_log:
+                print(f"Warning: Could not log W&B field image for sample {current_sample_global_idx} from {path_t1.name}: {e_wandb_log}")
+
+        plt.close(fig)
+
 
 def train_single_epoch(
         model: torch.nn.Module,
@@ -123,7 +282,6 @@ def train_single_epoch(
                 }
                 print(f"DEBUG: Train batch {num_batches}, div_pred stats: {div_pred_stats_train}")
                 print(f"DEBUG: Train batch {num_batches}, individual_losses[\"divergence\"]: {individual_losses['divergence'].item():.12e}") # High precision print
-
 
             pred_vel_stats_train = {
                 "min": predicted_vel_t1.min().item(), "max": predicted_vel_t1.max().item(),
@@ -352,89 +510,38 @@ def validate_on_pairs(
             # If data is not 3D, vorticity is not calculated, append NaN for consistency if key exists
             metrics_list.setdefault("mse_vorticity_mag", []).append(np.nan)
 
-        # Log field comparison image to W&B for the specified sample index
-        if wandb_run and i == log_field_image_sample_idx and points_np is not None: # Check points_np for plotting
-            try:
-                # Calculate error_mag specifically for this W&B log.
-                # This ensures error_mag_for_plot is defined in this scope.
-                error_mag_for_plot = torch.norm(predicted_vel_t1 - true_vel_t1, dim=1)
+        # --- Enhanced Field Plotting for selected samples ---
+        # The `log_field_image_sample_idx` parameter (from main script args, defaulting to 0)
+        # determines which sample (by its index `i` in `val_frame_pairs`) gets detailed plotting.
+        if i == log_field_image_sample_idx: # Check if the current sample is the one to plot
+            if points_np is not None and points_np.shape[0] > 0: # Ensure points exist for plotting
+                error_mag_tensor_for_plot = torch.norm(predicted_vel_t1 - true_vel_t1, dim=1)
+                # div_pred is already calculated from earlier metric computation.
 
-                true_vel_mag = true_vel_t1.norm(dim=1).cpu().numpy()
-                pred_vel_mag = predicted_vel_t1.norm(dim=1).cpu().numpy()
-                err_mag_np = error_mag_for_plot.cpu().numpy() # Use the locally calculated one for plotting
+                pred_vort_mag_np_for_plot = None
+                if points_np.shape[1] == 3: # Only attempt vorticity for 3D data
+                    # calculate_vorticity_magnitude is from metrics.py and handles PyVista import errors
+                    pred_vort_mag_np_for_plot = calculate_vorticity_magnitude(points_np, predicted_vel_t1.cpu().numpy())
 
-
-                points_plot = points_np # Use points_np which is confirmed not None
-
-                # Create a 2D slice (e.g., points near z=mean(z))
-                if points_plot.shape[1] == 3:  # Ensure data is 3D for slicing
-                    mean_z = np.mean(points_plot[:, 2])
-                    slice_indices = np.where(np.abs(points_plot[:, 2] - mean_z) < 0.05 * (
-                                np.max(points_plot[:, 2]) - np.min(points_plot[:, 2]) + 1e-6))[0]
-                    if len(slice_indices) < 3:  # Not enough points for triangulation
-                        print(f"Warning: Not enough points in slice for sample {i} to generate W&B field image.")
-                        slice_points_2d = points_plot[:, :2]  # Fallback to all XY points if slice is too small
-                        slice_true_mag = true_vel_mag
-                        slice_pred_mag = pred_vel_mag
-                        slice_err_mag = err_mag_np
-                    else:
-                        slice_points_2d = points_plot[slice_indices, :2]
-                        slice_true_mag = true_vel_mag[slice_indices]
-                        slice_pred_mag = pred_vel_mag[slice_indices]
-                        slice_err_mag = err_mag_np[slice_indices]
-                else:  # Data is already 2D
-                    slice_points_2d = points_plot
-                    slice_true_mag = true_vel_mag
-                    slice_pred_mag = pred_vel_mag
-                    slice_err_mag = err_mag_np
-
-                if len(slice_points_2d) >= 3:  # Need at least 3 points for Delaunay/tricontourf
-                    fig, axes = plt.subplots(1, 3, figsize=(18, 5))
-                    fig.suptitle(f"Epoch {epoch_num} - Sample {i} ({path_t1.stem}) - Z-slice comparison", fontsize=16)
-
-                    try:
-                        tri = Delaunay(slice_points_2d)
-
-                        ax = axes[0]
-                        contour1 = ax.tricontourf(slice_points_2d[:, 0], slice_points_2d[:, 1], tri.simplices,
-                                                  slice_true_mag, levels=14, cmap="jet")
-                        fig.colorbar(contour1, ax=ax)
-                        ax.set_title("True Velocity Magnitude")
-                        ax.set_xlabel("X")
-                        ax.set_ylabel("Y")
-                        ax.axis('equal')
-
-                        ax = axes[1]
-                        contour2 = ax.tricontourf(slice_points_2d[:, 0], slice_points_2d[:, 1], tri.simplices,
-                                                  slice_pred_mag, levels=14, cmap="jet")
-                        fig.colorbar(contour2, ax=ax)
-                        ax.set_title("Predicted Velocity Magnitude")
-                        ax.set_xlabel("X")
-                        ax.axis('equal')
-
-                        ax = axes[2]
-                        contour3 = ax.tricontourf(slice_points_2d[:, 0], slice_points_2d[:, 1], tri.simplices,
-                                                  slice_err_mag, levels=14, cmap="Reds")
-                        fig.colorbar(contour3, ax=ax)
-                        ax.set_title("Error Magnitude")
-                        ax.set_xlabel("X")
-                        ax.axis('equal')
-
-                        buf = io.BytesIO()
-                        plt.savefig(buf, format='png')
-                        buf.seek(0)
-                        wandb_run.log({f"{model_name}/Validation_Fields_Epoch{epoch_num}": wandb.Image(buf)})
-                        plt.close(fig)
-                    except Exception as e_plot:  # Catch errors during plotting (e.g. if all points collinear for Delaunay)
-                        print(f"Warning: Failed to generate tricontourf plot for sample {i}: {e_plot}")
-                        if 'fig' in locals() and fig is not None: plt.close(fig)  # Ensure figure is closed
-                else:
-                    print(
-                        f"Warning: Not enough unique points in slice for sample {i} ({len(slice_points_2d)} points) to generate W&B field image with tricontourf.")
-
-            except Exception as e_wandb_img:
-                print(f"Warning: Could not log W&B field image for sample {i}: {e_wandb_img}")
-                if 'fig' in locals() and fig is not None: plt.close(fig)  # Ensure figure is closed
+                # Call the comprehensive plotting function for the selected sample
+                _log_and_save_field_plots(
+                    points_np=points_np,
+                    true_vel_tensor=true_vel_t1,
+                    pred_vel_tensor=predicted_vel_t1,
+                    error_mag_tensor=error_mag_tensor_for_plot,
+                    pred_div_tensor=div_pred,
+                    pred_vort_mag_np=pred_vort_mag_np_for_plot,
+                    path_t1=path_t1,
+                    epoch_num=epoch_num,
+                    current_sample_global_idx=i,
+                    output_base_dir=output_base_dir,
+                    wandb_run=wandb_run, # Pass the wandb_run object
+                    model_name=model_name,
+                    simple_plot=False # Generate the full detailed plot
+                )
+            else: # Log if skipping plot for the designated sample due to no points
+                if wandb_run or output_base_dir: # Only print if plotting was intended
+                    print(f"DEBUG: Skipping detailed plot for designated val sample index {i} ({path_t1.name if path_t1 else 'N/A'}) due to no points or points_np is None.")
 
     avg_metrics = {key: float(np.nanmean(values) if np.any(np.isfinite(values)) else 0.0) for key, values in
                    metrics_list.items()}
