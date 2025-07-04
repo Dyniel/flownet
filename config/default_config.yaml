@@ -43,6 +43,31 @@ regularization_lambda: 0.0  # Strength of the regularization
 p_min: 0.05     # Minimum noise percentage (e.g., 0.05 for 5%).
 p_max: 0.15     # Maximum noise percentage (e.g., 0.15 for 15%).
 
+# Time extraction parameters
+time_extraction:
+  # method_priority: Defines the order of methods to attempt for extracting time from VTK files.
+  #   - "field_data": Looks for time information in the VTK file's field data arrays.
+  #                   Uses keys specified in `field_data_keys`.
+  #   - "filename": Parses the VTK filename using a regex pattern defined in `filename_pattern`.
+  #                 The regex must contain one capturing group for the time value.
+  #   - "fixed_dt": Calculates time as `frame_index * simulation_dt`. Frame index is based on
+  #                 the sorted order of VTK files in a case directory.
+  method_priority: ["field_data", "filename", "fixed_dt"]
+
+  # field_data_keys: List of keys to search for in `mesh.field_data` when using the "field_data" method.
+  # Example: ["TimeValue", "TIME", "simulation_time"]
+  field_data_keys: ["TimeValue", "TIME", "Time", "time"]
+
+  # filename_pattern: Regex pattern for the "filename" method. Must include one capturing group for the time value.
+  # Set to null or an empty string to disable filename-based extraction even if "filename" is in method_priority.
+  # Example for files like "case_output_t0.015.vtk": ".*_t(\\d+\\.\\d+)\\.vtk"
+  # Example for files like "Frame_0012_time_1.234_data.vtk": "Frame_\\d+_time_(\\d+\\.\\d+)_data\\.vtk"
+  filename_pattern: null
+
+  # simulation_dt: The fixed time step value (in seconds or consistent units) used by the "fixed_dt" method.
+  # This is only used if "fixed_dt" is in method_priority and other prior methods fail.
+  simulation_dt: 0.01
+
 # VTK Data Keys
 velocity_key: "U"                   # Key for ground truth velocity in input VTKs.
 pressure_key: "p"                   # Key for ground truth pressure in input VTKs.
@@ -135,3 +160,45 @@ slice_analysis:
   # For num_per_axis = 1, it will be at 50%. For num_per_axis = 2, at 33% and 66%.
   # Custom positions can be an alternative future feature.
   thickness_percent: 1.0        # Thickness of the slice as a percentage of the bounding box extent along the slicing axis (e.g., 1.0 for 1%)
+
+# --------------------------------------------------------------------------- #
+# Analysis Probes: Configuration for extracting time-series data at specific points and slices.
+# This data is saved to CSV files by scripts/5_combined_validation.py and can be visualized
+# by scripts/7_create_visualizations.py.
+# --------------------------------------------------------------------------- #
+analysis_probes:
+  points:
+    # enabled: Set to true to activate point probing.
+    enabled: false
+
+    # coordinates: A list of [x,y,z] coordinates for direct data probing.
+    # Velocity and derived quantities (vorticity, gradients, divergence) will be
+    # sampled at the mesh node nearest to each specified target coordinate.
+    # Example:
+    # coordinates:
+    #   - [0.05, 0.01, 0.0]  # Probe point 1
+    #   - [0.10, 0.02, 0.0]  # Probe point 2
+    coordinates: []
+
+    # velocity_field_name: Base name for velocity fields in the output CSV for point probes.
+    # True velocity will be 'true_<name>', predicted will be 'pred_<name>'.
+    # Example: if "velocity", columns will be 'true_velocity', 'pred_velocity'.
+    velocity_field_name: "velocity"
+
+  slices:
+    # enabled: Set to true to activate slice probing.
+    enabled: false
+
+    # definitions: A list of slice definitions. Each definition is a dictionary specifying:
+    #   - axis: "X", "Y", or "Z" (the normal to the slice plane).
+    #   - position: float, the coordinate value along the specified axis for the slice's center.
+    #   - thickness: float, the total thickness of the slice. Points within position +/- (thickness/2) are included.
+    # Example:
+    # definitions:
+    #   - {axis: "X", position: 0.05, thickness: 0.005} # Slice at X=0.05, thickness 0.005
+    #   - {axis: "Y", position: 0.0,  thickness: 0.01}  # Slice at Y=0.0,  thickness 0.01
+    definitions: []
+
+    # velocity_field_name: Base name for velocity fields related to slices in output CSV (primarily for consistency).
+    # Currently, slice outputs are averaged quantities like 'avg_true_vel_mag'.
+    velocity_field_name: "velocity_on_slice"

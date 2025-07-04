@@ -509,3 +509,67 @@ def calculate_slice_metrics_for_frame(
                 results[f"{slice_key_prefix}_avg_pred_vel_mag"] = np.nan
                 results[f"{slice_key_prefix}_num_points"] = 0
     return results
+
+
+def calculate_velocity_gradients(points_np: np.ndarray, velocity_np: np.ndarray) -> np.ndarray | None:
+    """
+    Calculates the gradient tensor of the velocity field at each point.
+    Uses PyVista for the underlying computation.
+    The gradient tensor is returned as a [num_points, 9] array (row-major order:
+    du/dx, du/dy, du/dz, dv/dx, dv/dy, dv/dz, dw/dx, dw/dy, dw/dz).
+
+    Args:
+        points_np: NumPy array of point coordinates, shape [num_points, 2 or 3].
+        velocity_np: NumPy array of velocity vectors, shape [num_points, 2 or 3].
+
+    Returns:
+        NumPy array of shape [num_points, 9] containing the flattened gradient tensor
+        for each point, or None if calculation fails.
+        For 2D inputs (points [N,2], velocity [N,2]), the z-components of gradients
+        (e.g. du/dz, dv/dz, dw/dx, dw/dy, dw/dz) will be zero. dw/dx, dw/dy will be zero
+        if velocity_np is [N,2] (as w component is zero).
+    """
+    try:
+        import pyvista as pv
+    except ImportError:
+        print("Warning: PyVista is not installed. Cannot calculate velocity gradients. Returning None.")
+        return None
+
+    if points_np.shape[0] == 0:
+        return np.empty((0, 9), dtype=np.float32)
+    if points_np.shape[0] != velocity_np.shape[0]:
+        raise ValueError("Points and velocity arrays must have the same number of points for gradient calculation.")
+
+    try:
+        # _create_pyvista_grid handles 2D/3D conversion and sets up the grid
+        pv_grid = _create_pyvista_grid(points_np, velocity_np)
+
+        if "velocity" not in pv_grid.point_data:
+            print("Warning: 'velocity' field not found in PyVista grid for gradient calculation. Returning None.")
+            return None
+
+        # Compute derivatives. The 'gradient' field will be a 9-component vector (tensor flattened row-wise).
+        # For 3D velocity U=(u,v,w) and points (x,y,z):
+        # gradient = [du/dx, du/dy, du/dz, dv/dx, dv/dy, dv/dz, dw/dx, dw/dy, dw/dz]
+        derivative_dataset = pv_grid.derivative(scalars=None, vectors='velocity', gradient='gradient', faster=False, progress_bar=False)
+
+        if 'gradient' in derivative_dataset.point_data:
+            grad_tensor_flat = derivative_dataset.point_data['gradient'] # Shape [num_points, 9]
+
+            # Ensure output is always [N,9], even if input was 2D points/velocity.
+            # PyVista's derivative filter should handle this correctly for its 'gradient' output.
+            # If input velocity was [N,2] (i.e. w=0), then dw/dx, dw/dy, dw/dz should be zero.
+            # If input points were [N,2] (i.e. z=0 effectively), then du/dz, dv/dz might be zero or reflect assumption of 2D flow.
+            # The exact behavior for 2D inputs needs to be noted if it's critical.
+            # For now, we assume PyVista provides a consistent [N,9] output.
+            if grad_tensor_flat.shape[1] != 9:
+                 print(f"Warning: PyVista gradient output shape is {grad_tensor_flat.shape}, expected [N, 9]. Returning None.")
+                 return None
+            return grad_tensor_flat.astype(np.float32)
+        else:
+            print("Warning: 'gradient' field not found after PyVista derivative computation. Returning None.")
+            return None
+
+    except Exception as e:
+        print(f"Error during PyVista velocity gradient calculation: {e}. Returning None.")
+        return None

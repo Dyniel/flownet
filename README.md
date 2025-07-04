@@ -691,3 +691,113 @@ python scripts/5_combined_validation.py \
 *   Hyperparameter optimization scripts using W&B Sweeps.
 *   More detailed post-processing and visualization tools (e.g., velocity profile plots at key cross-sections, pressure drop calculations).
 *   Integration with workflow management tools (e.g., Snakemake, Nextflow).
+
+## Time-Series Probing and Analysis (New Features)
+
+This project now includes capabilities to extract time-series data at specific user-defined points and planar slices from VTK simulation outputs. It can also calculate several Navier-Stokes related quantities at these probe locations.
+
+### 1. Time Extraction from VTK
+
+VTK files often store simulation time in various ways. The system now attempts to extract this time information to associate it with each data frame.
+
+**Configuration (`config/default_config.yaml`):**
+
+The `time_extraction` section in the configuration file controls how time is determined:
+
+```yaml
+time_extraction:
+  # method_priority: Defines the order of methods to attempt for extracting time.
+  #   - "field_data": Looks in VTK's field data arrays (e.g., global time value).
+  #   - "filename": Parses the VTK filename using a regex.
+  #   - "fixed_dt": Calculates time as frame_index * simulation_dt.
+  method_priority: ["field_data", "filename", "fixed_dt"]
+
+  # field_data_keys: List of keys to search for in mesh.field_data.
+  field_data_keys: ["TimeValue", "TIME", "Time", "time"]
+
+  # filename_pattern: Regex for "filename" method. Must have one capturing group for the time value.
+  # Example: ".*_t(\\d+\\.\\d+)\\.vtk" (for "case_t0.015.vtk")
+  filename_pattern: null
+
+  # simulation_dt: Fixed time step for "fixed_dt" method.
+  simulation_dt: 0.01
+```
+The `data_utils.py` script uses this configuration when loading VTK files, adding a `data.time` attribute to the PyTorch Geometric `Data` objects.
+
+### 2. Point and Slice Probes
+
+You can define specific points and slices where data (velocity, vorticity, gradients, divergence) should be extracted over time.
+
+**Configuration (`config/default_config.yaml`):**
+
+The `analysis_probes` section controls this:
+
+```yaml
+analysis_probes:
+  points:
+    enabled: false # Set to true to enable
+    coordinates: # List of [x,y,z] coordinates
+      # - [0.05, 0.01, 0.0]
+      # - [0.10, 0.02, 0.0]
+    velocity_field_name: "velocity"
+
+  slices:
+    enabled: false # Set to true to enable
+    definitions: # List of slice definitions
+      # - {axis: "X", position: 0.05, thickness: 0.005}
+      # - {axis: "Y", position: 0.0,  thickness: 0.01}
+    velocity_field_name: "velocity_on_slice"
+```
+
+*   **Point Probes**: Data is sampled at the mesh node nearest to each specified coordinate.
+*   **Slice Probes**: Data is extracted for all mesh nodes falling within the defined slice (axis, position, thickness). For CSV outputs, metrics are typically averaged over the slice.
+
+### 3. Generating Probe Data
+
+The script `scripts/5_combined_validation.py` (which is also used for general model validation) has been extended to generate this time-series probe data.
+
+*   **How to Run**:
+    1.  Ensure your main configuration YAML (e.g., `config/default_config.yaml` or a custom one) has the `time_extraction` and `analysis_probes` sections correctly set up (e.g., `enabled: true` for the probes you want).
+    2.  Run the script, for example:
+        ```bash
+        python scripts/5_combined_validation.py --config path/to/your_config.yaml --model-checkpoint path/to/model.pth --model-name YourModel --val-data-dir path/to/validation_cases --output-dir path/to/output_run_dir
+        ```
+*   **Output**:
+    *   If point probes are enabled, a CSV file named `probed_points_data_MODEL_GRAPH.csv` will be created in the `output_run_dir/model_predictions/` directory.
+    *   If slice probes are enabled, a CSV file named `probed_slices_data_MODEL_GRAPH.csv` will be created similarly.
+    *   These CSVs contain columns for time, probe definition, true and predicted velocity, vorticity, divergence, and velocity gradients (for points).
+
+**Structure of Output CSVs (Example Columns):**
+
+*   **Points CSV (`probed_points_data_...csv`):**
+    `case_name, frame_file, time, target_point_coords, actual_point_coords, distance_to_actual, true_velocity, pred_velocity, true_vort_mag, pred_vort_mag, true_grad_dudx, ..., pred_grad_dwdz, true_divergence, pred_divergence`
+    (Note: `true_velocity`, `pred_velocity`, `target_point_coords`, `actual_point_coords` will be string representations of lists, e.g., `'[0.1, 0.2, 0.3]'`)
+
+*   **Slices CSV (`probed_slices_data_...csv`):**
+    `case_name, frame_file, time, slice_axis, slice_position, slice_thickness, num_points_true, avg_true_vel_mag, num_points_pred, avg_pred_vel_mag, avg_true_vort_mag_slice, avg_pred_vort_mag_slice, avg_true_divergence_slice, avg_pred_divergence_slice`
+
+This data is intended for use in detailed analysis or as input for "training" processes that require time-dependent data with NS-related physical quantities.
+
+### 4. Visualizing Probe Data
+
+The script `scripts/7_create_visualizations.py` can be used to generate interactive HTML plots from the probe data CSVs.
+
+*   **How to Run**:
+    ```bash
+    python scripts/7_create_visualizations.py \
+        --points-csv path/to/output_run_dir/model_predictions/probed_points_data_MODEL_GRAPH.csv \
+        --slices-csv path/to/output_run_dir/model_predictions/probed_slices_data_MODEL_GRAPH.csv \
+        --output-dir path/to/save_visualizations/ \
+        --model-name "YourModelName"
+    ```
+    (Provide either or both CSV paths)
+*   **Output**: The script generates interactive HTML line plots for each unique point and slice, showing comparisons of true vs. predicted quantities over time.
+
+### 5. New Dependencies
+
+Make sure you have the following new dependencies installed if you use these features:
+*   `scipy`: For nearest-neighbor lookups in point probing.
+*   `plotly`: For generating interactive visualizations.
+*   `kaleido`: For potential static image export from Plotly (though current script focuses on HTML).
+
+Install them via: `pip install scipy plotly kaleido` (or add to `requirements.txt` and install). `scipy`, `plotly`, and `kaleido` have been added to the main `requirements.txt`.

@@ -8,3 +8,6 @@ matplotlib
 PyYAML
 wandb
 pyvista
+scipy
+plotly
+kaleido

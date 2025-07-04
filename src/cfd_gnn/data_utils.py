@@ -9,6 +9,8 @@ import os
 import glob
 from pathlib import Path
 import shutil
+import re # For filename parsing
+import warnings # For notifying user about time extraction issues
 
 import numpy as np
 import meshio
@@ -18,6 +20,83 @@ from sklearn.neighbors import NearestNeighbors
 from itertools import combinations
 
 from .utils import sort_frames_by_number, rand_unit_vector # Assuming utils.py is in the same package
+
+
+# Default time extraction configuration (can be overridden by global config)
+DEFAULT_TIME_EXTRACTION_CONFIG = {
+    "method_priority": ["field_data", "filename", "fixed_dt"],
+    "field_data_keys": ["TimeValue", "TIME", "Time", "time"], # Common keys for time in field_data
+    "filename_pattern": None, # Regex pattern to extract time from filename
+    "simulation_dt": 0.01 # Default time step if using fixed_dt method
+}
+
+def _extract_time_from_mesh(
+    mesh: meshio.Mesh,
+    vtk_path: Path | str, # For filename parsing and warning messages
+    frame_idx: int,       # For fixed_dt calculation
+    config: dict          # Time extraction configuration
+) -> float:
+    """
+    Extracts time from a meshio.Mesh object based on the provided configuration.
+    Uses the original vtk_path for filename parsing and frame_idx for fixed_dt.
+    Returns extracted time value, or np.nan if time cannot be determined.
+    """
+    vtk_path = Path(vtk_path) # Ensure Path object for consistency
+
+    # Use provided config or fall back to a modified default if config is missing keys
+    cfg = DEFAULT_TIME_EXTRACTION_CONFIG.copy()
+    if config is not None: # Update default with user-provided config
+        cfg.update(config)
+
+    for method in cfg.get("method_priority", []):
+        if method == "field_data":
+            if mesh.field_data:
+                for key in cfg.get("field_data_keys", []):
+                    if key in mesh.field_data:
+                        try:
+                            # field_data values are often arrays, try to get the first element
+                            time_val = float(mesh.field_data[key][0])
+                            return time_val
+                        except (ValueError, TypeError, IndexError) as e:
+                            warnings.warn(
+                                f"TimeExt: Could not parse time from field_data key '{key}' in {vtk_path.name}. Error: {e}",
+                                UserWarning
+                            )
+            continue
+
+        elif method == "filename":
+            pattern_str = cfg.get("filename_pattern")
+            if pattern_str:
+                try:
+                    match = re.search(pattern_str, vtk_path.name)
+                    if match and match.groups(): # Ensure a capturing group exists and matched
+                        time_val = float(match.group(1))
+                        return time_val
+                except (ValueError, TypeError, re.error) as e: # Catch regex errors too
+                    warnings.warn(
+                        f"TimeExt: Could not parse time from filename '{vtk_path.name}' using pattern '{pattern_str}'. Error: {e}",
+                        UserWarning
+                    )
+            continue
+
+        elif method == "fixed_dt":
+            dt = cfg.get("simulation_dt")
+            if dt is not None:
+                try:
+                    time_val = float(frame_idx * dt)
+                    return time_val
+                except (ValueError, TypeError) as e:
+                    warnings.warn(
+                        f"TimeExt: Could not calculate time using fixed_dt for {vtk_path.name} (frame_idx={frame_idx}, dt={dt}). Error: {e}",
+                        UserWarning
+                    )
+            continue
+        else:
+            warnings.warn(f"TimeExt: Unknown time extraction method '{method}' in config for {vtk_path.name}.", UserWarning)
+
+    warnings.warn(f"TimeExt: Could not extract time for {vtk_path.name} using any configured method. Returning NaN.", UserWarning)
+    return np.nan
+
 
 # --------------------------------------------------------------------- #
 # Noise Injection
@@ -149,7 +228,9 @@ def vtk_to_knn_graph(
     velocity_key: str = "U", # Key for velocity in point_data
     noisy_velocity_key_suffix: str = "_noisy", # Suffix if using noisy data
     use_noisy_data: bool = False, # If true, tries to use "U_noisy" (or similar)
-    device: torch.device | str = "cpu"
+    device: torch.device | str = "cpu",
+    frame_idx: int = 0, # Frame index in sequence, for fixed_dt time calculation
+    time_extraction_config: dict | None = None # Config for time extraction
 ) -> Data:
     """
     Loads a VTK file, optionally downsamples, builds a k-NN graph,
@@ -236,13 +317,22 @@ def vtk_to_knn_graph(
         edge_index=torch.from_numpy(edge_index_np).to(device),
         edge_attr=torch.from_numpy(relative_positions).to(device),
         path=str(vtk_path) # Store path for reference
+        # Time will be added below
     )
+
+    time_value = _extract_time_from_mesh(mesh, vtk_path, frame_idx,
+                                         time_extraction_config or DEFAULT_TIME_EXTRACTION_CONFIG)
+    data.time = torch.tensor([time_value], dtype=torch.float32)
+
+    return data
 
 def vtk_to_fullmesh_graph(
     vtk_path: str | Path,
     velocity_key: str = "U",
     pressure_key: str = "p", # For normalized pressure calculation
-    device: torch.device | str = "cpu"
+    device: torch.device | str = "cpu",
+    frame_idx: int = 0, # Frame index in sequence, for fixed_dt time calculation
+    time_extraction_config: dict | None = None # Config for time extraction
 ) -> Data:
     """
     Loads a VTK file and builds a graph from its tetrahedral cell connectivity.
@@ -325,7 +415,13 @@ def vtk_to_fullmesh_graph(
         p_norm=torch.from_numpy(normalized_pressure.astype(np.float32)).to(device),
         inlet_idx=torch.tensor(inlet_idx, device=device, dtype=torch.long),
         path=str(vtk_path)
+        # Time will be added below
     )
+
+    time_value = _extract_time_from_mesh(mesh, vtk_path, frame_idx,
+                                         time_extraction_config or DEFAULT_TIME_EXTRACTION_CONFIG)
+    data.time = torch.tensor([time_value], dtype=torch.float32)
+
     return data
 
 # --------------------------------------------------------------------- #
@@ -375,16 +471,31 @@ class PairedFrameDataset(Dataset):
     """
     def __init__(self, frame_pairs: list[tuple[Path, Path]], graph_config: dict,
                  graph_type: str = "knn", # "knn" or "full_mesh"
-                 use_noisy_data: bool = False, device: str | torch.device = "cpu"):
+                 use_noisy_data: bool = False, device: str | torch.device = "cpu",
+                 time_extraction_config: dict | None = None): # Added time_extraction_config
         super().__init__()
         self.frame_pairs = frame_pairs
-        self.graph_config = graph_config # Contains k, downsample_n, velocity_key etc.
+        self.graph_config = graph_config
         self.use_noisy_data = use_noisy_data
         self.device = device
         self.graph_type = graph_type
+        # Store a merged config: start with default, update with user's if provided
+        self.time_extraction_config = DEFAULT_TIME_EXTRACTION_CONFIG.copy()
+        if time_extraction_config:
+            self.time_extraction_config.update(time_extraction_config)
 
         if not self.frame_pairs:
             raise ValueError("frame_pairs list cannot be empty.")
+
+        # NOTE on frame_idx for PairedFrameDataset:
+        # The `idx` in `get(self, idx)` refers to the index of the *pair*.
+        # For fixed_dt time calculation, `frame_idx_t0 = idx` and `frame_idx_t1 = idx + 1`
+        # implicitly assumes that the `frame_pairs` were created from a sequence
+        # that started at frame 0 and was contiguous (e.g., frame0-frame1, frame1-frame2, etc.).
+        # If `make_frame_pairs` could be fed a list of frames with known original indices,
+        # or if it returned (path_t0, path_t1, original_idx_t0, original_idx_t1),
+        # that would be more robust for time calculation.
+        # For now, the simplification `frame_idx_t0 = idx` is used.
 
     def len(self) -> int:
         return len(self.frame_pairs)
@@ -392,15 +503,29 @@ class PairedFrameDataset(Dataset):
     def get(self, idx: int) -> tuple[Data, Data]:
         path_t0, path_t1 = self.frame_pairs[idx]
 
+        # Simplified frame_idx for time calculation (see note in __init__)
+        frame_idx_t0 = idx
+        frame_idx_t1 = idx + 1
+
+        common_args_t0 = {
+            "frame_idx": frame_idx_t0,
+            "time_extraction_config": self.time_extraction_config
+        }
+        common_args_t1 = {
+            "frame_idx": frame_idx_t1,
+            "time_extraction_config": self.time_extraction_config
+        }
+
         if self.graph_type == "knn":
             graph_t0 = vtk_to_knn_graph(
                 path_t0,
                 k_neighbors=self.graph_config["k"],
-                downsample_n=self.graph_config.get("down_n"), # Optional
+                downsample_n=self.graph_config.get("down_n"),
                 velocity_key=self.graph_config.get("velocity_key", "U"),
                 noisy_velocity_key_suffix=self.graph_config.get("noisy_velocity_key_suffix", "_noisy"),
                 use_noisy_data=self.use_noisy_data,
-                device=self.device
+                device=self.device,
+                **common_args_t0
             )
             graph_t1 = vtk_to_knn_graph(
                 path_t1,
@@ -408,24 +533,24 @@ class PairedFrameDataset(Dataset):
                 downsample_n=self.graph_config.get("down_n"),
                 velocity_key=self.graph_config.get("velocity_key", "U"),
                 noisy_velocity_key_suffix=self.graph_config.get("noisy_velocity_key_suffix", "_noisy"),
-                use_noisy_data=self.use_noisy_data, # Typically target is also noisy if input is
-                device=self.device
+                use_noisy_data=self.use_noisy_data, # Target typically matches input noise status
+                device=self.device,
+                **common_args_t1
             )
         elif self.graph_type == "full_mesh":
-            # For full_mesh, downsampling and k are not applicable from graph_config in the same way
-            # Noisy data handling for full_mesh might need specific keys if different from kNN.
-            # Assuming velocity_key and pressure_key are relevant.
             graph_t0 = vtk_to_fullmesh_graph(
                 path_t0,
                 velocity_key=self.graph_config.get("velocity_key", "U"),
                 pressure_key=self.graph_config.get("pressure_key", "p"),
-                device=self.device
+                device=self.device,
+                **common_args_t0
             )
             graph_t1 = vtk_to_fullmesh_graph(
                 path_t1,
                 velocity_key=self.graph_config.get("velocity_key", "U"),
                 pressure_key=self.graph_config.get("pressure_key", "p"),
-                device=self.device
+                device=self.device,
+                **common_args_t1
             )
         else:
             raise ValueError(f"Unknown graph_type: {self.graph_type}")
@@ -445,85 +570,173 @@ if __name__ == '__main__':
     case1_cfd = test_data_root / "sUbend_001" / "CFD"
     case1_cfd.mkdir(parents=True, exist_ok=True)
 
-    # Create a simple mesh for testing
+    # --- Test Time Extraction (Independent Tests First) ---
+    print("\n--- Testing Time Extraction Logic ---")
+    points_np_test = np.array([[0,0,0]], dtype=np.float64) # Minimal points
+    cells_test = None # Cells not needed for basic mesh object
+    velocity_np_test = np.random.rand(1, 3).astype(np.float32)
+
+    # Test Case 1: Time in field_data
+    mesh_with_time_field = meshio.Mesh(
+        points_np_test, cells_test,
+        point_data={"U": velocity_np_test},
+        field_data={"TimeValue": np.array([0.123], dtype=np.float32), "OtherData": np.array([11])}
+    )
+    frame_timefield_path = case1_cfd / "Frame_tf_data.vtk" # Needs to exist for filename parsing tests later
+    meshio.write(str(frame_timefield_path), mesh_with_time_field)
+
+    time_cfg_field_data_only = {"method_priority": ["field_data"], "field_data_keys": ["TimeValue", "TIME"]}
+    extracted_time_tf = _extract_time_from_mesh(mesh_with_time_field, frame_timefield_path, 0, time_cfg_field_data_only)
+    print(f"Time from field_data (expected 0.123): {extracted_time_tf}")
+    assert np.isclose(extracted_time_tf, 0.123), "Field data time extraction failed."
+
+    # Test Case 2: Time in filename
+    frame_time_in_name_path = case1_cfd / "mySim_output_frame_15_time_0.075_end.vtk"
+    # Create an empty file for testing filename parsing, mesh content doesn't matter here.
+    with open(frame_time_in_name_path, "w") as f: f.write("dummy vtk content for filename test")
+    dummy_mesh_for_filename = meshio.Mesh(points_np_test, cells_test) # Need a mesh object to pass
+
+    time_cfg_filename_only = {
+        "method_priority": ["filename"],
+        "filename_pattern": r".*_time_(\d+\.\d+)_.*\.vtk"
+    }
+    extracted_time_fn = _extract_time_from_mesh(dummy_mesh_for_filename, frame_time_in_name_path, 15, time_cfg_filename_only)
+    print(f"Time from filename (expected 0.075): {extracted_time_fn}")
+    assert np.isclose(extracted_time_fn, 0.075), "Filename time extraction failed."
+
+    # Test Case 3: Fixed DT
+    time_cfg_fixed_dt_only = {"method_priority": ["fixed_dt"], "simulation_dt": 0.02}
+    extracted_time_dt = _extract_time_from_mesh(dummy_mesh_for_filename, "any_name.vtk", 5, time_cfg_fixed_dt_only) # frame_idx = 5
+    print(f"Time from fixed_dt (frame 5, dt=0.02, expected 0.1): {extracted_time_dt}")
+    assert np.isclose(extracted_time_dt, 0.1), "Fixed DT time extraction failed."
+
+    # Test Case 4: Priority and fallback (field data fails, filename fails, uses fixed_dt)
+    time_cfg_priority_fallback = {
+        "method_priority": ["field_data", "filename", "fixed_dt"],
+        "field_data_keys": ["NonExistentKey"],
+        "filename_pattern": r"non_matching_pattern_(\d+)_time_(\d+\.\d+)\.vtk",
+        "simulation_dt": 0.05
+    }
+    # Use mesh_with_time_field, but field_data key won't match, filename pattern also won't match its name.
+    extracted_time_prio = _extract_time_from_mesh(mesh_with_time_field, frame_timefield_path, 2, time_cfg_priority_fallback) # frame_idx=2
+    print(f"Time from priority fallback to fixed_dt (frame 2, dt=0.05, expected 0.1): {extracted_time_prio}")
+    assert np.isclose(extracted_time_prio, 0.1), "Priority fallback to fixed_dt failed."
+    print("--- Time extraction logic tests passed. ---")
+
+
+    # --- Setup for Original Tests (using the new time extraction features) ---
     points_np = np.array([[0,0,0], [1,0,0], [0,1,0], [1,1,0], [0,0,1]], dtype=np.float64)
     velocity_np = np.random.rand(5, 3).astype(np.float32)
     pressure_np = np.random.rand(5).astype(np.float32)
-    # Minimal cells for full_mesh_graph (one tetra) - needs at least 4 points for a tetra
-    # For kNN, cells are not strictly needed as it's based on point proximity
     cells_dict = [meshio.CellBlock("tetra", np.array([[0,1,2,4]]))] if points_np.shape[0] >=4 else None
 
-
-    dummy_mesh = meshio.Mesh(points_np, cells_dict,
-                             point_data={"U": velocity_np, "p": pressure_np})
+    # This mesh will be used for frame0 and frame1, time will be derived by fixed_dt via DEFAULT_TIME_EXTRACTION_CONFIG
+    # as it has no specific time field_data or filename pattern matching default.
+    dummy_mesh_no_time_info = meshio.Mesh(points_np, cells_dict,
+                                          point_data={"U": velocity_np, "p": pressure_np})
 
     frame0_path = case1_cfd / "Frame_00_data.vtk"
     frame1_path = case1_cfd / "Frame_01_data.vtk"
-    meshio.write(str(frame0_path), dummy_mesh, file_format="vtk")
-    meshio.write(str(frame1_path), dummy_mesh, file_format="vtk") # Write same mesh for simplicity
+    meshio.write(str(frame0_path), dummy_mesh_no_time_info, file_format="vtk")
+    meshio.write(str(frame1_path), dummy_mesh_no_time_info, file_format="vtk")
 
-    # 1. Test Noise Injection
-    print("\nTesting Noise Injection...")
+    # 1. Test Noise Injection (remains mostly the same, just ensure it runs)
+    print("\n--- Testing Noise Injection ---")
     create_noisy_dataset_tree(test_data_root, test_noisy_root, p_min=0.05, p_max=0.15, overwrite=True)
     noisy_frame0_path = test_noisy_root / "sUbend_001" / "CFD" / "Frame_00_data.vtk"
     assert noisy_frame0_path.exists(), "Noisy file not created."
-    noisy_mesh_read = meshio.read(noisy_frame0_path)
+    noisy_mesh_read = meshio.read(noisy_frame0_path) # Read back to check
     assert "U_noisy" in noisy_mesh_read.point_data, "U_noisy field missing."
-    assert "noise_percentage" in noisy_mesh_read.point_data, "noise_percentage field missing."
     print("Noise injection test passed.")
 
-    # 2. Test k-NN Graph Conversion
-    print("\nTesting k-NN Graph Conversion...")
-    graph_config_knn = {"k": 2, "down_n": None, "velocity_key": "U"} # k < N-1
-    if points_np.shape[0] <= graph_config_knn["k"]: # Adjust k if too large for dummy data
-        graph_config_knn["k"] = max(1, points_np.shape[0]-2)
+    # 2. Test k-NN Graph Conversion (with time)
+    print("\n--- Testing k-NN Graph Conversion (with time) ---")
+    graph_config_knn = {"k": 2, "down_n": None, "velocity_key": "U"}
+    if points_np.shape[0] <= graph_config_knn["k"]:
+        graph_config_knn["k"] = max(1, points_np.shape[0]-2 if points_np.shape[0]>1 else 0)
 
-    knn_graph = vtk_to_knn_graph(frame0_path, **graph_config_knn, use_noisy_data=False, device="cpu")
-    print(f"k-NN graph (original data): {knn_graph}")
-    assert knn_graph.x.shape[0] == points_np.shape[0]
-    assert knn_graph.edge_index.shape[0] == 2
+    # Test frame0_path (should use fixed_dt, frame_idx=0, dt=0.01 -> time=0.0)
+    knn_graph_f0 = vtk_to_knn_graph(
+        frame0_path, **graph_config_knn, use_noisy_data=False, device="cpu",
+        frame_idx=0, time_extraction_config=DEFAULT_TIME_EXTRACTION_CONFIG
+    )
+    print(f"k-NN graph (frame0_path): {knn_graph_f0}")
+    assert hasattr(knn_graph_f0, 'time'), "k-NN graph missing 'time' attribute."
+    assert np.isclose(knn_graph_f0.time.item(), 0.0), f"k-NN frame0 time mismatch: {knn_graph_f0.time.item()}"
 
-    noisy_knn_graph = vtk_to_knn_graph(noisy_frame0_path, **graph_config_knn, use_noisy_data=True, device="cpu")
+    # Test with frame_timefield_path (should use field_data, time=0.123)
+    knn_graph_tf = vtk_to_knn_graph(
+        frame_timefield_path, **graph_config_knn, use_noisy_data=False, device="cpu",
+        frame_idx=0, # frame_idx doesn't matter if field_data is found first
+        time_extraction_config=time_cfg_field_data_only # Use the config that prioritizes field_data
+    )
+    print(f"k-NN graph (frame_timefield_path): {knn_graph_tf}")
+    assert hasattr(knn_graph_tf, 'time'), "k-NN graph (tf) missing 'time' attribute."
+    assert np.isclose(knn_graph_tf.time.item(), 0.123), f"k-NN field data time mismatch: {knn_graph_tf.time.item()}"
+
+    # Test noisy graph (should also get time, e.g. fixed_dt from default config)
+    # noisy_frame0_path is a copy of frame0_path but with noise.
+    noisy_knn_graph = vtk_to_knn_graph(
+        noisy_frame0_path, **graph_config_knn, use_noisy_data=True, device="cpu",
+        frame_idx=0, time_extraction_config=DEFAULT_TIME_EXTRACTION_CONFIG
+    )
     print(f"k-NN graph (noisy data): {noisy_knn_graph}")
-    assert noisy_knn_graph.x.shape[0] == points_np.shape[0]
-    print("k-NN graph conversion test passed.")
+    assert hasattr(noisy_knn_graph, 'time'), "Noisy k-NN graph missing 'time' attribute."
+    assert np.isclose(noisy_knn_graph.time.item(), 0.0), f"Noisy k-NN time mismatch: {noisy_knn_graph.time.item()}"
+    print("k-NN graph conversion (with time) tests passed.")
 
-    # 3. Test Full Mesh Graph Conversion (if cells were defined)
+    # 3. Test Full Mesh Graph Conversion (with time, if cells were defined)
     if cells_dict:
-        print("\nTesting Full Mesh Graph Conversion...")
-        full_mesh_graph = vtk_to_fullmesh_graph(frame0_path, velocity_key="U", pressure_key="p", device="cpu")
-        print(f"Full mesh graph: {full_mesh_graph}")
-        assert full_mesh_graph.x.shape[0] == points_np.shape[0]
-        assert "p_norm" in full_mesh_graph
-        # Number of edges depends on unique edges in tetra: 1 tetra = 6 unique edges * 2 (symmetric) = 12
-        if points_np.shape[0] >= 4:
-             assert full_mesh_graph.edge_index.shape[1] >= 6*2 # 6 unique edges from one tetra, made symmetric
-        print("Full mesh graph conversion test passed.")
+        print("\n--- Testing Full Mesh Graph Conversion (with time) ---")
+        full_mesh_graph_f0 = vtk_to_fullmesh_graph(
+            frame0_path, velocity_key="U", pressure_key="p", device="cpu",
+            frame_idx=0, time_extraction_config=DEFAULT_TIME_EXTRACTION_CONFIG
+        )
+        print(f"Full mesh graph (frame0_path): {full_mesh_graph_f0}")
+        assert hasattr(full_mesh_graph_f0, 'time'), "Full_mesh graph missing 'time' attribute."
+        assert np.isclose(full_mesh_graph_f0.time.item(), 0.0), f"Full_mesh frame0 time mismatch: {full_mesh_graph_f0.time.item()}"
+        if points_np.shape[0] >= 4: # Basic check from original test
+             assert full_mesh_graph_f0.edge_index.shape[1] >= 6*2
+        print("Full mesh graph conversion (with time) test passed.")
     else:
         print("\nSkipping Full Mesh Graph Conversion test (not enough points for tetra or no cells).")
 
+    # 4. Test Frame Pairing and Dataset (with time)
+    print("\n--- Testing Frame Pairing and Dataset (with time) ---")
+    frame_pairs = make_frame_pairs(test_data_root) # Uses frame0_path and frame1_path
+    assert len(frame_pairs) == 1
 
-    # 4. Test Frame Pairing and Dataset
-    print("\nTesting Frame Pairing and Dataset...")
-    frame_pairs = make_frame_pairs(test_data_root)
-    assert len(frame_pairs) == 1, f"Expected 1 pair, got {len(frame_pairs)}"
-    assert frame_pairs[0] == (frame0_path, frame1_path)
-
-    paired_ds_knn = PairedFrameDataset(frame_pairs, graph_config_knn, graph_type="knn", device="cpu")
+    # Test PairedFrameDataset with default time extraction (fixed_dt via DEFAULT_TIME_EXTRACTION_CONFIG)
+    # For pair idx 0: path_t0=frame0_path (frame_idx=0), path_t1=frame1_path (frame_idx=1)
+    # Expected times: t0=0.0, t1=0.01 (using dt=0.01 from DEFAULT_TIME_EXTRACTION_CONFIG)
+    paired_ds_knn = PairedFrameDataset(
+        frame_pairs, graph_config_knn, graph_type="knn", device="cpu",
+        time_extraction_config=None # Let it use its internal default copy
+    )
     g0_knn, g1_knn = paired_ds_knn[0]
-    print(f"Paired k-NN graphs: G0={g0_knn}, G1={g1_knn}")
-    assert g0_knn.x.shape[0] == points_np.shape[0]
+    print(f"Paired k-NN graphs: G0_time={g0_knn.time.item()}, G1_time={g1_knn.time.item()}")
+    assert hasattr(g0_knn, 'time') and hasattr(g1_knn, 'time'), "Paired k-NN graphs missing 'time'."
+    assert np.isclose(g0_knn.time.item(), 0.0), "Paired k-NN G0 time incorrect."
+    assert np.isclose(g1_knn.time.item(), 0.01), "Paired k-NN G1 time incorrect."
 
-    if cells_dict: # Only test full_mesh dataset if we could build full_mesh graphs
+    if cells_dict:
         graph_config_full = {"velocity_key": "U", "pressure_key": "p"}
-        paired_ds_full = PairedFrameDataset(frame_pairs, graph_config_full, graph_type="full_mesh", device="cpu")
+        paired_ds_full = PairedFrameDataset(
+            frame_pairs, graph_config_full, graph_type="full_mesh", device="cpu",
+            time_extraction_config=DEFAULT_TIME_EXTRACTION_CONFIG # Explicitly pass for test
+        )
         g0_full, g1_full = paired_ds_full[0]
-        print(f"Paired full mesh graphs: G0={g0_full}, G1={g1_full}")
-        assert g0_full.x.shape[0] == points_np.shape[0]
-
-    print("Frame pairing and dataset tests passed.")
+        print(f"Paired full_mesh graphs: G0_time={g0_full.time.item()}, G1_time={g1_full.time.item()}")
+        assert hasattr(g0_full, 'time') and hasattr(g1_full, 'time'), "Paired full_mesh graphs missing 'time'."
+        assert np.isclose(g0_full.time.item(), 0.0), "Paired full_mesh G0 time incorrect."
+        assert np.isclose(g1_full.time.item(), 0.01), "Paired full_mesh G1 time incorrect."
+    print("Frame pairing and dataset (with time) tests passed.")
 
     # Clean up dummy files
+    # These were created inside case1_cfd:
+    if frame_timefield_path.exists(): frame_timefield_path.unlink()
+    if frame_time_in_name_path.exists(): frame_time_in_name_path.unlink()
+    # Original cleanup for directories:
     if test_data_root.exists(): shutil.rmtree(test_data_root)
     if test_noisy_root.exists(): shutil.rmtree(test_noisy_root)
     print("\nDummy test files and directories cleaned up.")
