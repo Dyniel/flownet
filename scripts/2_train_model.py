@@ -182,8 +182,8 @@ def main():
 
     train_dataset = PairedFrameDataset(
         train_pairs, graph_build_config_train, graph_type=graph_type_train,
-        use_noisy_data=train_use_noisy_flag, # Controlled by --data-source
-        device=device # Graphs will be moved to device upon getitem
+        use_noisy_data=train_use_noisy_flag # Controlled by --data-source
+        # device=device # Removed: Graphs are created on CPU by PairedFrameDataset
     )
     train_loader = PyGDataLoader(train_dataset, batch_size=cfg["batch_size"], shuffle=True, num_workers=cfg.get("num_workers",0))
 
@@ -315,8 +315,8 @@ def main():
                              "velocity_key": sample_graph_cfg.get("velocity_key", "U"),
                              "noisy_velocity_key_suffix": sample_graph_cfg.get("noisy_velocity_key_suffix", "_noisy"),
                          }
-                         g0_sample = vtk_to_knn_graph(sample_path_t0, **knn_args_sample, use_noisy_data=val_use_noisy_for_run, device=device)
-                         g1_sample = vtk_to_knn_graph(sample_path_t1, **knn_args_sample, use_noisy_data=val_use_noisy_for_run, device=device)
+                         g0_sample = vtk_to_knn_graph(sample_path_t0, **knn_args_sample, use_noisy_data=val_use_noisy_for_run) # Removed device
+                         g1_sample = vtk_to_knn_graph(sample_path_t1, **knn_args_sample, use_noisy_data=val_use_noisy_for_run) # Removed device
                     else: # full_mesh
                          # For full_mesh, use_noisy_data is not directly passed to vtk_to_fullmesh_graph
                          # as it reads specific keys. The sample_graph_cfg already has velocity_key which might be noisy.
@@ -324,8 +324,13 @@ def main():
                          # based on val_use_noisy_for_run. For now, full_mesh relies on the pre-set velocity_key in sample_graph_cfg.
                          # This part might need refinement if full_mesh also needs explicit clean/noisy switching logic here.
                          # Assuming velocity_key in sample_graph_cfg is already correctly "U" or "U_noisy" based on higher level logic if applicable.
-                         g0_sample = vtk_to_fullmesh_graph(sample_path_t0, velocity_key=sample_graph_cfg.get("velocity_key", "U"), pressure_key=cfg.get("pressure_key", "p"), device=device)
-                         g1_sample = vtk_to_fullmesh_graph(sample_path_t1, velocity_key=sample_graph_cfg.get("velocity_key", "U"), pressure_key=cfg.get("pressure_key", "p"), device=device)
+                         g0_sample = vtk_to_fullmesh_graph(sample_path_t0, velocity_key=sample_graph_cfg.get("velocity_key", "U"), pressure_key=cfg.get("pressure_key", "p")) # Removed device
+                         g1_sample = vtk_to_fullmesh_graph(sample_path_t1, velocity_key=sample_graph_cfg.get("velocity_key", "U"), pressure_key=cfg.get("pressure_key", "p")) # Removed device
+
+                    # Move sample graphs to device before model call
+                    g0_sample = g0_sample.to(device)
+                    # g1_sample is used for real_sample = g1_sample.x.cpu(), so it can stay on CPU or be moved if needed by other logic
+                    # For model(g0_sample), only g0_sample needs to be on device.
 
                     with torch.no_grad(): pred_sample = model(g0_sample).cpu()
                     real_sample = g1_sample.x.cpu() # True velocity from the target frame
