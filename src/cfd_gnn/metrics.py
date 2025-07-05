@@ -232,6 +232,7 @@ def calculate_vorticity_magnitude(points_np: np.ndarray, velocity_np: np.ndarray
         # It works on PolyData (point clouds) as well.
         # We request vorticity by ensuring 'velocity' is the active vector field.
         print(f"DEBUG_VORT: Input points_np shape: {points_np.shape}, velocity_np shape: {velocity_np.shape}")
+
         pv_grid.active_vectors_name = 'velocity' # Ensure active vectors are explicitly set before the call
         derivative_dataset = pv_grid.compute_derivative(progress_bar=False)
 

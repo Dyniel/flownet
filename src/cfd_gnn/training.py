@@ -186,6 +186,7 @@ def _log_and_save_field_plots(
                 wandb_run.log({image_log_key: wandb.Image(pil_image)}, step=epoch_num, commit=False)
                 buf.close()
                 pil_image.close()
+
             except Exception as e_wandb_log:
                 print(f"Warning: Could not log W&B field image for sample {current_sample_global_idx} from {path_t1.name} (epoch {epoch_num}): {e_wandb_log}")
 
@@ -358,6 +359,7 @@ def validate_on_pairs(
     probe_data_collected = [] # List to store dicts for CSV/Pandas for the detailed CSV file
     # Data for W&B Table: list of lists/tuples: [case, probe_id, target_x, target_y, target_z, error_mag]
     wandb_table_probe_errors_data = []
+
     case_probe_definitions = {} # Stores {case_name: [(target_coord_str, node_idx, target_coord_xyz), ...]}
 
 
@@ -531,6 +533,7 @@ def validate_on_pairs(
                         error_probe_mag_val
                     ])
 
+
                     # CSV Data Collection (detailed)
                     probe_data_collected.append({
                         "epoch": epoch_num, "case": current_case_name,
@@ -558,6 +561,7 @@ def validate_on_pairs(
                 vtk_output_dir.mkdir(parents=True, exist_ok=True)
                 vtk_file_path = vtk_output_dir / f"{frame_name_stem}_fields.vtk"
 
+
                 true_vel_np = true_vel_t1.cpu().numpy()
                 pred_vel_np = predicted_vel_t1.cpu().numpy()
                 delta_v_vectors = true_vel_np - pred_vel_np
@@ -566,6 +570,7 @@ def validate_on_pairs(
                     "true_velocity": true_vel_np,
                     "predicted_velocity": pred_vel_np,
                     "delta_velocity_vector": delta_v_vectors, # Add delta_v vector field
+
                     "velocity_error_magnitude": error_mag_for_vtk.cpu().numpy()
                 }
                 if points_np_frame.shape[1] == 3: # Vorticity only for 3D
@@ -613,6 +618,7 @@ def validate_on_pairs(
     }
     # wandb_probe_metrics_for_epoch is no longer returned for direct logging of individual metrics
     return return_metrics, probe_data_collected
+
 
 
 if __name__ == '__main__':
