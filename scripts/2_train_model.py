@@ -32,6 +32,7 @@ from pathlib import Path
 import sys
 import shutil
 import wandb
+import pandas as pd # For saving probe data
 
 import torch
 from torch.optim import Adam
@@ -222,6 +223,24 @@ def main():
 
         # Initialize model, optimizer, scheduler
         model_arch_cfg = {**cfg, **cfg.get(f"{model_name}_config", {})} # Allow model-specific overrides
+
+        # --- Logging model and graph parameters ---
+        print(f"DEBUG: Initializing model {model_name} with the following effective parameters:")
+        print(f"  h_dim (hidden_dim): {model_arch_cfg.get('h_dim', 128)}") # Default from FlowNet if not in cfg
+        print(f"  layers (num_gnn_layers): {model_arch_cfg.get('layers', 5)}")
+        print(f"  encoder_mlp_layers: {model_arch_cfg.get('encoder_mlp_layers', 2)}")
+        print(f"  decoder_mlp_layers: {model_arch_cfg.get('decoder_mlp_layers', 2)}")
+        print(f"  gnn_step_mlp_layers: {model_arch_cfg.get('gnn_step_mlp_layers', 2)}")
+        print(f"  node_in_features: {model_arch_cfg.get('node_in_features', 3)}") # Default from FlowNet
+        print(f"  edge_in_features: {model_arch_cfg.get('edge_in_features', 3)}") # Default from FlowNet
+        print(f"  checkpoint_edge_encoder_internals: {model_arch_cfg.get('checkpoint_edge_encoder_internals', False)}") # Default from FlowNet
+
+        graph_cfg_params = cfg.get("graph_config", {})
+        print(f"DEBUG: Graph construction parameters (from 'graph_config'):")
+        print(f"  k (for kNN): {graph_cfg_params.get('k', 'Not set in graph_config, default in data_utils might apply')}")
+        print(f"  down_n (downsampling): {graph_cfg_params.get('down_n', 'Not set, no downsampling or default in data_utils')}")
+        # --- End logging ---
+
         model = models_registry[model_name](model_arch_cfg).to(device)
         optimizer = Adam(model.parameters(), lr=cfg["lr"])
         scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=cfg["patience"] // 2) # Adjusted patience for scheduler
@@ -231,6 +250,7 @@ def main():
 
         # Per-model state for early stopping and best model saving
         best_model_path = models_output_dir / f"{model_name.lower()}_best.pth"
+        all_probes_data_for_model = [] # Initialize list to collect probe data across epochs for this model
 
         for epoch in range(1, cfg["epochs"] + 1):
             epoch_start_time = time.time()
@@ -263,26 +283,33 @@ def main():
 
                 val_graph_cfg = {**cfg.get("graph_config",{}), **val_during_train_cfg.get("val_graph_config",{})}
                 val_graph_cfg.update({"velocity_key": cfg["velocity_key"], "noisy_velocity_key_suffix": cfg["noisy_velocity_key_suffix"]})
-                val_graph_type = val_during_train_cfg.get("val_graph_type", graph_type_train)
+                val_graph_type = val_during_train_cfg.get("val_graph_type", graph_type_train) # graph_type is used by validate_on_pairs if not in val_graph_cfg
 
                 save_fields_vtk_flag = val_during_train_cfg.get("save_validation_fields_vtk", False)
-                log_field_image_idx = val_during_train_cfg.get("log_field_image_sample_idx", 0) # Default to sample 0
+                log_field_image_idx = val_during_train_cfg.get("log_field_image_sample_idx", 0)
 
-                val_metrics = validate_on_pairs(
-                    model,
-                    val_pairs_during_train,
-                    graph_config=val_graph_cfg,
+                # Pass global_cfg to validate_on_pairs for access to all configs including probes
+                val_metrics, epoch_probe_data_for_csv, epoch_probe_data_for_wandb = validate_on_pairs(
+                    model=model,
+                    val_frame_pairs=val_pairs_during_train,
+                    global_cfg=cfg, # Pass the main config dict
                     use_noisy_data_for_val=val_use_noisy_for_run,
                     device=device,
-                    graph_type=val_graph_type,
+                    # graph_type and graph_config are now derived inside validate_on_pairs from global_cfg
                     epoch_num=epoch,
                     output_base_dir=run_output_dir,
                     save_fields_vtk=save_fields_vtk_flag,
-                    wandb_run=wandb_run, # Pass wandb run object
+                    wandb_run=wandb_run, # wandb_run is still passed for field image logging inside validate_on_pairs
                     log_field_image_sample_idx=log_field_image_idx,
-                    model_name=model_name # Pass model_name for W&B log key
+                    model_name=model_name
                 )
+                if epoch_probe_data_for_csv: # If any probe data was collected this epoch for CSV
+                    all_probes_data_for_model.extend(epoch_probe_data_for_csv)
+
                 log_dict_epoch.update({f"{model_name}/{k}": v for k,v in val_metrics.items()})
+                if epoch_probe_data_for_wandb: # Merge W&B probe metrics
+                    log_dict_epoch.update(epoch_probe_data_for_wandb)
+
 
                 # Check for improvement (using val_mse as primary metric)
                 if val_metrics.get("val_mse", float('inf')) < best_val_metric:
@@ -354,7 +381,7 @@ def main():
 
             # Log to W&B
             if wandb_run:
-                wandb_run.log(log_dict_epoch)
+                wandb_run.log(log_dict_epoch, step=epoch) # Ensure explicit step is used for the main log call
 
             # Log to CSV
             csv_writer.writerow([
@@ -377,6 +404,20 @@ def main():
         print(f"Finished training for model: {model_name}")
         print(f"Best validation MSE for {model_name}: {best_val_metric:.4e}")
         print(f"Best model for {model_name} saved at: {best_model_path}")
+
+        # --- Save collected probe data for this model ---
+        if all_probes_data_for_model:
+            probes_df = pd.DataFrame(all_probes_data_for_model)
+            probes_csv_path = run_output_dir / f"{model_name.lower()}_probes_timeseries.csv"
+            probes_df.to_csv(probes_csv_path, index=False)
+            print(f"Saved probe data for {model_name} to {probes_csv_path}")
+            if wandb_run: # Log as artifact
+                probes_artifact_name = f"{model_name}_probe_data"
+                probes_art = wandb.Artifact(probes_artifact_name, type="dataset")
+                probes_art.add_file(str(probes_csv_path))
+                wandb_run.log_artifact(probes_art)
+                print(f"Logged {probes_csv_path} as W&B artifact: {probes_artifact_name}")
+
 
         # --- Post-training Histogram JSD Validation (optional) ---
         hist_val_after_train_cfg = cfg.get("histogram_validation_after_training", {})

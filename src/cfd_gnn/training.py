@@ -25,6 +25,7 @@ import matplotlib.pyplot as plt
 from scipy.spatial import Delaunay
 import io
 import wandb
+from PIL import Image # Import PIL Image
 
 # New helper function for plotting:
 def _log_and_save_field_plots(
@@ -178,8 +179,11 @@ def _log_and_save_field_plots(
                 plt.savefig(buf, format='png')
                 buf.seek(0)
                 log_key_suffix = "_simple" if simple_plot else "_detailed"
-                wandb_run.log({f"{model_name}/Validation_Fields_Epoch{epoch_num}_Sample{current_sample_global_idx}{log_key_suffix}": wandb.Image(buf)})
+                # Convert buffer to PIL Image before passing to wandb.Image
+                pil_image = Image.open(buf)
+                wandb_run.log({f"{model_name}/Validation_Fields_Epoch{epoch_num}_Sample{current_sample_global_idx}{log_key_suffix}": wandb.Image(pil_image)})
                 buf.close()
+                pil_image.close() # Close the PIL image
             except Exception as e_wandb_log:
                 print(f"Warning: Could not log W&B field image for sample {current_sample_global_idx} from {path_t1.name}: {e_wandb_log}")
 
@@ -304,271 +308,296 @@ def train_single_epoch(
 def validate_on_pairs(
         model: torch.nn.Module,
         val_frame_pairs: list[tuple[Path, Path]],  # List of (path_t0, path_t1)
-        graph_config: dict,  # For vtk_to_graph (k_neighbors, downsample_n, keys)
+        # graph_config: dict,  # For vtk_to_graph (k_neighbors, downsample_n, keys) # Replaced by global_cfg access
+        # For probe points, we need the global config, not just graph_config
+        global_cfg: dict, # Main config dictionary
         use_noisy_data_for_val: bool,  # Whether val data itself is noisy
         device: torch.device,
-        graph_type: str = "knn",  # "knn" or "full_mesh" for graph construction
+        # graph_type: str = "knn",  # "knn" or "full_mesh" for graph construction # Get from global_cfg
         epoch_num: int = -1,  # For naming output files, -1 for non-epoch specific validation
         output_base_dir: str | Path | None = None,  # Base path for saving field VTKs
         save_fields_vtk: bool = False,  # Flag to control saving of VTK files
         wandb_run: wandb.sdk.wandb_run.Run | None = None,  # For logging images
         log_field_image_sample_idx: int = 0,  # Index of the sample in val_frame_pairs to log as an image
         model_name: str = "Model"  # For naming W&B logs
-) -> dict:
+) -> tuple[dict, list]: # Will now also return probe_data_collected
     """
     Validates the model on a set of paired frames from VTK files.
     Computes MSE, RMSE of velocity magnitude, and MSE of divergence.
     Optionally saves VTK files with true, predicted, and error fields.
+    Optionally logs velocity at probe points.
 
     Args:
         model: The trained GNN model.
         val_frame_pairs: List of (path_t0, path_t1) tuples for validation.
-        graph_config: Configuration for graph construction. Expects 'k_neighbors' if knn.
+        global_cfg: The global configuration dictionary.
         use_noisy_data_for_val: If True, loads noisy versions of validation data.
         device: PyTorch device.
-        graph_type: Type of graph to construct for validation ("knn" or "full_mesh").
-        epoch_num: Current epoch number, used for naming output directories for VTK fields.
-        output_base_dir: Base directory for saving run outputs, where validation_fields will be created.
+        epoch_num: Current epoch number, used for naming output directories for VTK fields and probe CSV.
+        output_base_dir: Base directory for saving run outputs.
         save_fields_vtk: If True, saves the VTK files with detailed fields.
+        wandb_run: Optional W&B run object.
+        log_field_image_sample_idx: Index of sample for detailed field plot.
+        model_name: Name of the model for logging.
 
     Returns:
-        A dictionary with mean validation metrics: "val_mse", "val_rmse_mag", "val_mse_div".
+        A tuple: (dictionary_with_mean_validation_metrics, list_of_probe_data_rows)
     """
     model.eval()
-    metrics_list = {
+    metrics_list = { # Standard metrics
         "mse": [], "rmse_mag": [], "mse_div": [],
         "mse_x": [], "mse_y": [], "mse_z": [],
         "mse_vorticity_mag": [],
         "cosine_sim": [],
-        "max_true_vel_mag": [], # Max magnitude of true velocity for the frame
-        "max_pred_vel_mag": []  # Max magnitude of predicted velocity for the frame
+        "max_true_vel_mag": [],
+        "max_pred_vel_mag": []
     }
+    # --- Probe Data Initialization ---
+    probe_data_collected = [] # List to store dicts for CSV/Pandas
+    wandb_probe_metrics_for_epoch = {} # Dict for W&B direct logging
+    case_probe_definitions = {} # Stores {case_name: [(target_coord_str, node_idx, target_coord_xyz), ...]}
 
-    from .data_utils import vtk_to_knn_graph, vtk_to_fullmesh_graph  # Local import for clarity
+
+    from .data_utils import vtk_to_knn_graph, vtk_to_fullmesh_graph # Local import
     from .metrics import cosine_similarity_metric # Import cosine similarity
+    from sklearn.neighbors import NearestNeighbors # For probe point finding
+
+    # Extract relevant configs from global_cfg
+    # Use validation_during_training specific graph_config if available, else main graph_config
+    # This was simplified from the original as global_cfg is now passed directly.
+    val_train_cfg = global_cfg.get("validation_during_training", {})
+    graph_config = val_train_cfg.get("val_graph_config", global_cfg.get("graph_config", {}))
+    # Ensure essential keys are present, falling back to top-level cfg or defaults
+    graph_config.update({
+        "k": graph_config.get("k", global_cfg.get("graph_config", {}).get("k", 12)), # Default k if not found anywhere
+        "down_n": graph_config.get("down_n", global_cfg.get("graph_config", {}).get("down_n")),
+        "velocity_key": graph_config.get("velocity_key", global_cfg.get("velocity_key", "U")),
+        "noisy_velocity_key_suffix": graph_config.get("noisy_velocity_key_suffix", global_cfg.get("noisy_velocity_key_suffix", "_noisy")),
+        "pressure_key": graph_config.get("pressure_key", global_cfg.get("pressure_key", "p"))
+    })
+    graph_type = val_train_cfg.get("val_graph_type", global_cfg.get("default_graph_type", "knn"))
+
+    probes_cfg = global_cfg.get("analysis_probes", {}).get("points", {})
+    probes_enabled = probes_cfg.get("enabled", False)
+    # Default to [1,1,1] (center point) if num_probes_per_axis not specified
+    probes_num_per_axis = probes_cfg.get("num_probes_per_axis", [1,1,1])
+    probes_output_field_name = probes_cfg.get("output_field_name", "velocity_at_probe")
+
 
     for i, (path_t0, path_t1) in enumerate(val_frame_pairs):
-        # For extensive VTK saving, one might save only for a subset of pairs, e.g., if i % N == 0
-        # For now, saving for all pairs in the validation set if save_fields_vtk is True.
+        current_case_name = path_t0.parent.parent.name # e.g. sUbend_011
 
+        # --- Setup Probes for the current case if not already done ---
+        if probes_enabled and current_case_name not in case_probe_definitions:
+            print(f"DEBUG: Setting up probes for case: {current_case_name}")
+            # To get geometry for probe placement, load the first frame (path_t0) of this case
+            # This requires constructing a temporary graph object for its 'pos' attribute.
+            temp_graph_args_for_pos = {
+                "k_neighbors": graph_config["k"],
+                "downsample_n": graph_config.get("down_n"),
+                "velocity_key": graph_config.get("velocity_key"), # Use the determined velocity key
+                "noisy_velocity_key_suffix": graph_config.get("noisy_velocity_key_suffix"),
+                "use_noisy_data": use_noisy_data_for_val # Use validation noise setting
+            }
+            if graph_type == "knn":
+                 first_frame_graph_cpu = vtk_to_knn_graph(path_t0, **temp_graph_args_for_pos)
+            else: # full_mesh
+                 first_frame_graph_cpu = vtk_to_fullmesh_graph(
+                     path_t0,
+                     velocity_key=graph_config.get("velocity_key"),
+                     pressure_key=graph_config.get("pressure_key")
+                 )
+
+            case_points_np = first_frame_graph_cpu.pos.cpu().numpy()
+            if case_points_np.shape[0] == 0:
+                print(f"Warning: Case {current_case_name} first frame has no points. Skipping probe setup for this case.")
+                case_probe_definitions[current_case_name] = [] # Mark as processed, no probes
+            else:
+                min_coords = case_points_np.min(axis=0)
+                max_coords = case_points_np.max(axis=0)
+                bbox_extents = max_coords - min_coords
+
+                current_case_probes_list = []
+                nx, ny, nz = probes_num_per_axis[0], probes_num_per_axis[1], probes_num_per_axis[2]
+
+                for ix_prog in range(nx): # Use different loop var name
+                    # Position is at (index + 1) / (count + 1) fraction of extent
+                    px = min_coords[0] + (bbox_extents[0] * (ix_prog + 1) / (nx + 1)) if nx > 0 and bbox_extents[0] > 1e-6 else min_coords[0] + 0.5 * bbox_extents[0]
+                    for iy_prog in range(ny):
+                        py = min_coords[1] + (bbox_extents[1] * (iy_prog + 1) / (ny + 1)) if ny > 0 and bbox_extents[1] > 1e-6 else min_coords[1] + 0.5 * bbox_extents[1]
+                        for iz_prog in range(nz):
+                            pz = min_coords[2] + (bbox_extents[2] * (iz_prog + 1) / (nz + 1)) if nz > 0 and bbox_extents[2] > 1e-6 else min_coords[2] + 0.5 * bbox_extents[2]
+
+                            target_coord = np.array([px, py, pz])
+                            nn_probes = NearestNeighbors(n_neighbors=1).fit(case_points_np) # Renamed nn
+                            _, nearest_node_idx_arr = nn_probes.kneighbors(target_coord.reshape(1, -1)) # Renamed
+                            node_idx = int(nearest_node_idx_arr.squeeze())
+
+                            target_coord_str = f"P_X{px:.2f}_Y{py:.2f}_Z{pz:.2f}"
+                            current_case_probes_list.append((target_coord_str, node_idx, target_coord))
+                case_probe_definitions[current_case_name] = current_case_probes_list
+                print(f"DEBUG: Defined {len(current_case_probes_list)} probes for case {current_case_name}.")
+            del first_frame_graph_cpu # Free memory
+
+
+        # Graph construction (actual graphs for model input)
         if graph_type == "knn":
-            # Prepare arguments for vtk_to_knn_graph carefully, mapping 'k' from config
-            knn_args = {
-                "k_neighbors": graph_config["k"],  # Map 'k' from config to 'k_neighbors'
+            knn_args_val = {
+                "k_neighbors": graph_config["k"],
                 "downsample_n": graph_config.get("down_n"),
-                "velocity_key": graph_config.get("velocity_key", "U"),
-                "noisy_velocity_key_suffix": graph_config.get("noisy_velocity_key_suffix", "_noisy"),
+                "velocity_key": graph_config.get("velocity_key"),
+                "noisy_velocity_key_suffix": graph_config.get("noisy_velocity_key_suffix"),
             }
-            # Prepare arguments for vtk_to_knn_graph carefully, mapping 'k' from config
-            knn_args = {
-                "k_neighbors": graph_config["k"],  # Map 'k' from config to 'k_neighbors'
-                "downsample_n": graph_config.get("down_n"),
-                "velocity_key": graph_config.get("velocity_key", "U"),
-                "noisy_velocity_key_suffix": graph_config.get("noisy_velocity_key_suffix", "_noisy"),
-            }
-            graph_t0_cpu = vtk_to_knn_graph( # Graph created on CPU
-                path_t0,
-                **knn_args,
-                use_noisy_data=use_noisy_data_for_val # Removed device from here
-            )
-            graph_t1_cpu = vtk_to_knn_graph(  # Graph created on CPU
-                path_t1,
-                **knn_args,
-                use_noisy_data=use_noisy_data_for_val # Removed device from here
-            )
+            graph_t0_cpu = vtk_to_knn_graph(path_t0, **knn_args_val, use_noisy_data=use_noisy_data_for_val)
+            graph_t1_cpu = vtk_to_knn_graph(path_t1, **knn_args_val, use_noisy_data=use_noisy_data_for_val) # Target uses same noise setting
         elif graph_type == "full_mesh":
-            graph_t0_cpu = vtk_to_fullmesh_graph( # Graph created on CPU
-                path_t0, velocity_key=graph_config.get("velocity_key", "U"),
-                pressure_key=graph_config.get("pressure_key", "p") # Removed device
-            )
-            graph_t1_cpu = vtk_to_fullmesh_graph(  # Graph created on CPU
-                path_t1, velocity_key=graph_config.get("velocity_key", "U"),
-                pressure_key=graph_config.get("pressure_key", "p") # Removed device
-            )
+            graph_t0_cpu = vtk_to_fullmesh_graph(path_t0, velocity_key=graph_config.get("velocity_key"), pressure_key=graph_config.get("pressure_key"))
+            graph_t1_cpu = vtk_to_fullmesh_graph(path_t1, velocity_key=graph_config.get("velocity_key"), pressure_key=graph_config.get("pressure_key"))
         else:
             raise ValueError(f"Unsupported graph_type for validation: {graph_type}")
 
         # Move graphs to device before model inference
         graph_t0 = graph_t0_cpu.to(device)
-        graph_t1 = graph_t1_cpu.to(device) # Also move graph_t1 for consistency if its attributes are used
+        graph_t1 = graph_t1_cpu.to(device)
 
         predicted_vel_t1 = model(graph_t0)
-        true_vel_t1 = graph_t1.x # Already on device due to graph_t1.to(device)
+        true_vel_t1 = graph_t1.x
 
-        # MSE for velocity vectors (overall)
+        # --- Standard Metrics Calculation ---
         mse = F.mse_loss(predicted_vel_t1, true_vel_t1).item()
         metrics_list["mse"].append(mse)
-
-        # MSE for each velocity component
         for component_idx, component_label in enumerate(['x', 'y', 'z']):
-            mse_comp = F.mse_loss(predicted_vel_t1[:, component_idx], true_vel_t1[:, component_idx]).item()
-            metrics_list[f"mse_{component_label}"].append(mse_comp)
+            if predicted_vel_t1.shape[1] > component_idx: # Ensure component exists (e.g. for 2D data)
+                mse_comp = F.mse_loss(predicted_vel_t1[:, component_idx], true_vel_t1[:, component_idx]).item()
+                metrics_list[f"mse_{component_label}"].append(mse_comp)
+            else:
+                metrics_list[f"mse_{component_label}"].append(np.nan)
 
-        # RMSE for velocity magnitudes
+
         pred_mag = predicted_vel_t1.norm(dim=1)
         true_mag = true_vel_t1.norm(dim=1)
         rmse_mag = torch.sqrt(F.mse_loss(pred_mag, true_mag)).item()
         metrics_list["rmse_mag"].append(rmse_mag)
 
-        # MSE of divergence (divergence of predicted field vs. divergence of true field)
-        # Note: Original code `(cont_div(pred, g0) ** 2).mean().item()` implies target div is 0.
-        # Here, we can compare div_pred to div_true if desired, or just penalize non-zero div_pred.
-        # For consistency with original, let's use (div_pred^2).mean()
-        div_pred = calculate_divergence(predicted_vel_t1, graph_t0)
-
-        # DEBUG: Log divergence and prediction stats for the first few validation samples
-        if i < 2: # Log for first 2 validation samples
-            div_pred_stats_val = {
-                "min": div_pred.min().item(), "max": div_pred.max().item(),
-                "mean": div_pred.mean().item(), "std": div_pred.std().item(),
-                "abs_mean": div_pred.abs().mean().item()
-            }
-            print(f"DEBUG: Val sample {i} ({path_t0.name if hasattr(path_t0, 'name') else 'N/A'}), div_pred stats: {div_pred_stats_val}")
-
-            pred_vel_stats_val = {
-                "min": predicted_vel_t1.min().item(), "max": predicted_vel_t1.max().item(),
-                "mean": predicted_vel_t1.mean().item(), "std": predicted_vel_t1.std().item(),
-                "abs_mean": predicted_vel_t1.abs().mean().item()
-            }
-            print(f"DEBUG: Val sample {i} ({path_t0.name if hasattr(path_t0, 'name') else 'N/A'}), pred_vel_t1 stats: {pred_vel_stats_val}")
-
-        # If we want to compare to divergence of true field (requires true_vel_t1 on graph_t0 structure)
-        # div_true = calculate_divergence(true_vel_t1, graph_t0) # This might be problematic if meshes differ slightly
-        # mse_div = F.mse_loss(div_pred, div_true).item()
-        mse_div = (div_pred ** 2).mean().item()  # Penalize non-zero divergence of prediction
-        if i < 2: # Log for first few validation samples
-            print(f"DEBUG: Val sample {i} ({path_t0.name if hasattr(path_t0, 'name') else 'N/A'}), mse_div: {mse_div:.12e}") # High precision print
+        div_pred_tensor = calculate_divergence(predicted_vel_t1, graph_t0) # Renamed to avoid conflict
+        mse_div = (div_pred_tensor ** 2).mean().item()
         metrics_list["mse_div"].append(mse_div)
 
-        # Cosine Similarity
-        cos_sim = cosine_similarity_metric(predicted_vel_t1.cpu(), true_vel_t1.cpu()) # Ensure CPU for numpy based metric
+        cos_sim = cosine_similarity_metric(predicted_vel_t1.cpu().numpy(), true_vel_t1.cpu().numpy()) # Numpy for metric
         metrics_list["cosine_sim"].append(cos_sim)
 
-        # Max velocity magnitudes
-        max_true_vel_mag = true_vel_t1.norm(dim=1).max().item()
-        max_pred_vel_mag = predicted_vel_t1.norm(dim=1).max().item()
+        max_true_vel_mag = true_mag.max().item()
+        max_pred_vel_mag = pred_mag.max().item()
         metrics_list["max_true_vel_mag"].append(max_true_vel_mag)
         metrics_list["max_pred_vel_mag"].append(max_pred_vel_mag)
 
-        # Attempt to get points_np early if pos data is available.
-        points_np = None
-        if graph_t1.pos is not None:
-            points_np = graph_t1.pos.cpu().numpy()
+        points_np_frame = graph_t1.pos.cpu().numpy() # Points for current frame
 
-        # Flag to track if mse_vorticity_mag has been added for this item
-        vorticity_metric_added_for_item = False
-        # error_mag = None # Initialize error_mag to None # Removed, will be calculated on demand
+        if points_np_frame.shape[1] == 3: # Only if 3D data
+            true_vort_mag_np = calculate_vorticity_magnitude(points_np_frame, true_vel_t1.cpu().numpy())
+            pred_vort_mag_np = calculate_vorticity_magnitude(points_np_frame, predicted_vel_t1.cpu().numpy())
+            if true_vort_mag_np is not None and pred_vort_mag_np is not None and \
+               true_vort_mag_np.shape == pred_vort_mag_np.shape:
+                mse_vort_mag = np.mean((true_vort_mag_np - pred_vort_mag_np) ** 2)
+                metrics_list["mse_vorticity_mag"].append(mse_vort_mag)
+            else: metrics_list["mse_vorticity_mag"].append(np.nan)
+        else: metrics_list["mse_vorticity_mag"].append(np.nan)
 
-        # Save detailed fields to VTK if requested
-        if save_fields_vtk and output_base_dir and points_np is not None: # points_np must exist
+
+        # --- Probe Data Extraction and Logging ---
+        if probes_enabled and current_case_name in case_probe_definitions and case_probe_definitions[current_case_name]:
+            frame_time_val = graph_t0.time.item() if hasattr(graph_t0, 'time') and graph_t0.time is not None else float(i)
+
+            for probe_idx, (target_coord_str, node_idx, target_coord_actual_xyz) in enumerate(case_probe_definitions[current_case_name]):
+                if 0 <= node_idx < true_vel_t1.shape[0]: # Check if node_idx is valid for current graph
+                    true_probe_vel_vals = true_vel_t1[node_idx].cpu().numpy()
+                    pred_probe_vel_vals = predicted_vel_t1[node_idx].cpu().numpy()
+
+                    true_probe_mag_val = np.linalg.norm(true_probe_vel_vals)
+                    pred_probe_mag_val = np.linalg.norm(pred_probe_vel_vals)
+                    error_vec_probe = true_probe_vel_vals - pred_probe_vel_vals
+                    error_probe_mag_val = np.linalg.norm(error_vec_probe)
+
+                    # Store metrics for W&B logging (will be logged in bulk later)
+                    wandb_probe_metrics_for_epoch[f"{model_name}/Probes/{current_case_name}/{target_coord_str}/TrueMag"] = true_probe_mag_val
+                    wandb_probe_metrics_for_epoch[f"{model_name}/Probes/{current_case_name}/{target_coord_str}/PredMag"] = pred_probe_mag_val
+                    wandb_probe_metrics_for_epoch[f"{model_name}/Probes/{current_case_name}/{target_coord_str}/ErrorMag"] = error_probe_mag_val
+
+                    # CSV Data Collection (detailed)
+                    probe_data_collected.append({
+                        "epoch": epoch_num, "case": current_case_name,
+                        "frame_path_t0": str(path_t0), "frame_time_t0": frame_time_val,
+                        "probe_id_str": target_coord_str,
+                        "probe_target_x": target_coord_actual_xyz[0],
+                        "probe_target_y": target_coord_actual_xyz[1],
+                        "probe_target_z": target_coord_actual_xyz[2],
+                        "node_idx": node_idx,
+                        "true_vx": true_probe_vel_vals[0], "true_vy": true_probe_vel_vals[1], "true_vz": true_probe_vel_vals[2] if len(true_probe_vel_vals) == 3 else 0.0,
+                        "pred_vx": pred_probe_vel_vals[0], "pred_vy": pred_probe_vel_vals[1], "pred_vz": pred_probe_vel_vals[2] if len(pred_probe_vel_vals) == 3 else 0.0,
+                        "true_mag": true_probe_mag_val, "pred_mag": pred_probe_mag_val, "error_mag": error_probe_mag_val
+                    })
+        # --- End Probe Data ---
+
+
+        # --- VTK Saving and Plotting (using points_np_frame) ---
+        if save_fields_vtk and output_base_dir and points_np_frame is not None:
             try:
-                # Calculate error magnitude for VTK saving
                 error_mag_for_vtk = torch.norm(predicted_vel_t1 - true_vel_t1, dim=1)
                 frame_name_stem = path_t1.stem
-                case_name = path_t1.parent.parent.name
+                # case_name is current_case_name
                 epoch_folder_name = f"epoch_{epoch_num}" if epoch_num >= 0 else "final_validation"
-                vtk_output_dir = Path(output_base_dir) / "validation_fields" / epoch_folder_name / case_name
+                vtk_output_dir = Path(output_base_dir) / "validation_fields" / model_name / epoch_folder_name / current_case_name
                 vtk_output_dir.mkdir(parents=True, exist_ok=True)
                 vtk_file_path = vtk_output_dir / f"{frame_name_stem}_fields.vtk"
 
-                # true_vel_np and pred_vel_np are needed for VTK and vorticity
                 true_vel_np = true_vel_t1.cpu().numpy()
                 pred_vel_np = predicted_vel_t1.cpu().numpy()
+                delta_v_vectors = true_vel_np - pred_vel_np
 
                 point_data_for_vtk = {
                     "true_velocity": true_vel_np,
                     "predicted_velocity": pred_vel_np,
-                    "velocity_error_magnitude": error_mag_for_vtk.cpu().numpy() # Use error_mag_for_vtk
+                    "delta_velocity_vector": delta_v_vectors, # Add delta_v vector field
+                    "velocity_error_magnitude": error_mag_for_vtk.cpu().numpy()
                 }
+                if points_np_frame.shape[1] == 3: # Vorticity only for 3D
+                    # true_vort_mag_np and pred_vort_mag_np already computed if 3D
+                    if true_vort_mag_np is not None: point_data_for_vtk["true_vorticity_magnitude"] = true_vort_mag_np
+                    if pred_vort_mag_np is not None: point_data_for_vtk["predicted_vorticity_magnitude"] = pred_vort_mag_np
 
-                # Calculate and add vorticity if points are 3D
-                if points_np.shape[1] == 3:
-                    true_vort_mag = calculate_vorticity_magnitude(points_np, true_vel_np)
-                    pred_vort_mag = calculate_vorticity_magnitude(points_np, pred_vel_np)
-                    if true_vort_mag is not None and pred_vort_mag is not None:
-                        point_data_for_vtk["true_vorticity_magnitude"] = true_vort_mag
-                        point_data_for_vtk["predicted_vorticity_magnitude"] = pred_vort_mag
+                write_vtk_with_fields(str(vtk_file_path), points_np_frame, point_data_for_vtk)
+            except Exception as e_vtk:
+                print(f"Warning: Could not save detailed VTK fields for {path_t1.name}: {e_vtk}")
 
-                        # Calculate MSE for vorticity magnitude
-                        # Ensure they are torch tensors for mse_loss if needed, or use numpy.
-                        # For simplicity, using numpy for mse if arrays are already numpy.
-                        if true_vort_mag.shape == pred_vort_mag.shape:  # Basic check
-                            mse_vort_mag = np.mean((true_vort_mag - pred_vort_mag) ** 2)
-                            metrics_list["mse_vorticity_mag"].append(mse_vort_mag)
-                        else:
-                            print(
-                                f"Warning: Shape mismatch for vorticity magnitudes for {path_t1.name}, cannot compute MSE.")
-                    else:
-                        # Append a placeholder if vorticity calculation failed for this frame
-                        metrics_list["mse_vorticity_mag"].append(np.nan)  # Or some other indicator like -1
+        if i == log_field_image_sample_idx and points_np_frame is not None and points_np_frame.shape[0] > 0:
+            error_mag_tensor_for_plot = torch.norm(predicted_vel_t1 - true_vel_t1, dim=1)
+            # pred_vort_mag_np already computed if 3D, else None
+            _log_and_save_field_plots(
+                points_np=points_np_frame, true_vel_tensor=true_vel_t1, pred_vel_tensor=predicted_vel_t1,
+                error_mag_tensor=error_mag_tensor_for_plot, pred_div_tensor=div_pred_tensor,
+                pred_vort_mag_np=pred_vort_mag_np if points_np_frame.shape[1] == 3 else None,
+                path_t1=path_t1, epoch_num=epoch_num, current_sample_global_idx=i,
+                output_base_dir=output_base_dir, wandb_run=wandb_run, model_name=model_name
+            )
+        # --- End VTK and Plotting ---
 
-                write_vtk_with_fields(
-                    filepath=str(vtk_file_path),
-                    points=points_np,  # Use points from target graph
-                    point_data=point_data_for_vtk
-                )
-            except Exception as e:
-                print(f"Warning: Could not save detailed VTK fields for {path_t1.name}: {e}")
-                # Ensure a placeholder for mse_vorticity_mag if VTK saving fails before its calculation for this frame
-                if "mse_vorticity_mag" not in metrics_list or len(
-                        metrics_list["mse_vorticity_mag"]) <= i:  # Check if already added for this 'i'
-                    if points_np.shape[1] == 3:  # Only append if it was supposed to be calculated
-                        metrics_list["mse_vorticity_mag"].append(np.nan)
-        elif points_np.shape[1] != 3 and "mse_vorticity_mag" not in metrics_list or len(
-                metrics_list["mse_vorticity_mag"]) <= i:
-            # If data is not 3D, vorticity is not calculated, append NaN for consistency if key exists
-            metrics_list.setdefault("mse_vorticity_mag", []).append(np.nan)
+    # --- Aggregation of standard metrics ---
+    avg_metrics = {key: float(np.nanmean(values) if len(values) > 0 and np.any(np.isfinite(values)) else np.nan)
+                   for key, values in metrics_list.items() if values}
 
-        # --- Enhanced Field Plotting for selected samples ---
-        # The `log_field_image_sample_idx` parameter (from main script args, defaulting to 0)
-        # determines which sample (by its index `i` in `val_frame_pairs`) gets detailed plotting.
-        if i == log_field_image_sample_idx: # Check if the current sample is the one to plot
-            if points_np is not None and points_np.shape[0] > 0: # Ensure points exist for plotting
-                error_mag_tensor_for_plot = torch.norm(predicted_vel_t1 - true_vel_t1, dim=1)
-                # div_pred is already calculated from earlier metric computation.
-
-                pred_vort_mag_np_for_plot = None
-                if points_np.shape[1] == 3: # Only attempt vorticity for 3D data
-                    # calculate_vorticity_magnitude is from metrics.py and handles PyVista import errors
-                    pred_vort_mag_np_for_plot = calculate_vorticity_magnitude(points_np, predicted_vel_t1.cpu().numpy())
-
-                # Call the comprehensive plotting function for the selected sample
-                _log_and_save_field_plots(
-                    points_np=points_np,
-                    true_vel_tensor=true_vel_t1,
-                    pred_vel_tensor=predicted_vel_t1,
-                    error_mag_tensor=error_mag_tensor_for_plot,
-                    pred_div_tensor=div_pred,
-                    pred_vort_mag_np=pred_vort_mag_np_for_plot,
-                    path_t1=path_t1,
-                    epoch_num=epoch_num,
-                    current_sample_global_idx=i,
-                    output_base_dir=output_base_dir,
-                    wandb_run=wandb_run, # Pass the wandb_run object
-                    model_name=model_name,
-                    simple_plot=False # Generate the full detailed plot
-                )
-            else: # Log if skipping plot for the designated sample due to no points
-                if wandb_run or output_base_dir: # Only print if plotting was intended
-                    print(f"DEBUG: Skipping detailed plot for designated val sample index {i} ({path_t1.name if path_t1 else 'N/A'}) due to no points or points_np is None.")
-
-    avg_metrics = {key: float(np.nanmean(values) if np.any(np.isfinite(values)) else 0.0) for key, values in
-                   metrics_list.items()}
-
-    # Ensure all expected keys are present in the return, even if empty (though avg_metrics handles this)
     return_metrics = {
-        "val_mse": avg_metrics.get("mse", 0.0),
-        "val_rmse_mag": avg_metrics.get("rmse_mag", 0.0),
-        "val_mse_div": avg_metrics.get("mse_div", 0.0),
-        "val_mse_x": avg_metrics.get("mse_x", 0.0),
-        "val_mse_y": avg_metrics.get("mse_y", 0.0),
-        "val_mse_z": avg_metrics.get("mse_z", 0.0),
-        "val_mse_vorticity_mag": avg_metrics.get("mse_vorticity_mag", 0.0),
-        "val_cosine_sim": avg_metrics.get("cosine_sim", 0.0),
-        "val_avg_max_true_vel_mag": avg_metrics.get("max_true_vel_mag", 0.0), # Added avg max true velocity
-        "val_avg_max_pred_vel_mag": avg_metrics.get("max_pred_vel_mag", 0.0)  # Added avg max pred velocity
+        "val_mse": avg_metrics.get("mse", np.nan),
+        "val_rmse_mag": avg_metrics.get("rmse_mag", np.nan),
+        "val_mse_div": avg_metrics.get("mse_div", np.nan),
+        "val_mse_x": avg_metrics.get("mse_x", np.nan),
+        "val_mse_y": avg_metrics.get("mse_y", np.nan),
+        "val_mse_z": avg_metrics.get("mse_z", np.nan),
+        "val_mse_vorticity_mag": avg_metrics.get("mse_vorticity_mag", np.nan),
+        "val_cosine_sim": avg_metrics.get("cosine_sim", np.nan),
+        "val_avg_max_true_vel_mag": avg_metrics.get("max_true_vel_mag", np.nan),
+        "val_avg_max_pred_vel_mag": avg_metrics.get("max_pred_vel_mag", np.nan)
     }
-    return return_metrics
+    return return_metrics, probe_data_collected, wandb_probe_metrics_for_epoch
 
 
 if __name__ == '__main__':
