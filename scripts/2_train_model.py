@@ -32,6 +32,7 @@ from pathlib import Path
 import sys
 import shutil
 import wandb
+import pandas as pd # For saving probe data
 
 import torch
 from torch.optim import Adam
@@ -249,6 +250,7 @@ def main():
 
         # Per-model state for early stopping and best model saving
         best_model_path = models_output_dir / f"{model_name.lower()}_best.pth"
+        all_probes_data_for_model = [] # Initialize list to collect probe data across epochs for this model
 
         for epoch in range(1, cfg["epochs"] + 1):
             epoch_start_time = time.time()
@@ -281,25 +283,29 @@ def main():
 
                 val_graph_cfg = {**cfg.get("graph_config",{}), **val_during_train_cfg.get("val_graph_config",{})}
                 val_graph_cfg.update({"velocity_key": cfg["velocity_key"], "noisy_velocity_key_suffix": cfg["noisy_velocity_key_suffix"]})
-                val_graph_type = val_during_train_cfg.get("val_graph_type", graph_type_train)
+                val_graph_type = val_during_train_cfg.get("val_graph_type", graph_type_train) # graph_type is used by validate_on_pairs if not in val_graph_cfg
 
                 save_fields_vtk_flag = val_during_train_cfg.get("save_validation_fields_vtk", False)
-                log_field_image_idx = val_during_train_cfg.get("log_field_image_sample_idx", 0) # Default to sample 0
+                log_field_image_idx = val_during_train_cfg.get("log_field_image_sample_idx", 0)
 
-                val_metrics = validate_on_pairs(
-                    model,
-                    val_pairs_during_train,
-                    graph_config=val_graph_cfg,
+                # Pass global_cfg to validate_on_pairs for access to all configs including probes
+                val_metrics, epoch_probe_data = validate_on_pairs(
+                    model=model,
+                    val_frame_pairs=val_pairs_during_train,
+                    global_cfg=cfg, # Pass the main config dict
                     use_noisy_data_for_val=val_use_noisy_for_run,
                     device=device,
-                    graph_type=val_graph_type,
+                    # graph_type and graph_config are now derived inside validate_on_pairs from global_cfg
                     epoch_num=epoch,
                     output_base_dir=run_output_dir,
                     save_fields_vtk=save_fields_vtk_flag,
-                    wandb_run=wandb_run, # Pass wandb run object
+                    wandb_run=wandb_run,
                     log_field_image_sample_idx=log_field_image_idx,
-                    model_name=model_name # Pass model_name for W&B log key
+                    model_name=model_name
                 )
+                if epoch_probe_data: # If any probe data was collected this epoch
+                    all_probes_data_for_model.extend(epoch_probe_data)
+
                 log_dict_epoch.update({f"{model_name}/{k}": v for k,v in val_metrics.items()})
 
                 # Check for improvement (using val_mse as primary metric)
@@ -395,6 +401,20 @@ def main():
         print(f"Finished training for model: {model_name}")
         print(f"Best validation MSE for {model_name}: {best_val_metric:.4e}")
         print(f"Best model for {model_name} saved at: {best_model_path}")
+
+        # --- Save collected probe data for this model ---
+        if all_probes_data_for_model:
+            probes_df = pd.DataFrame(all_probes_data_for_model)
+            probes_csv_path = run_output_dir / f"{model_name.lower()}_probes_timeseries.csv"
+            probes_df.to_csv(probes_csv_path, index=False)
+            print(f"Saved probe data for {model_name} to {probes_csv_path}")
+            if wandb_run: # Log as artifact
+                probes_artifact_name = f"{model_name}_probe_data"
+                probes_art = wandb.Artifact(probes_artifact_name, type="dataset")
+                probes_art.add_file(str(probes_csv_path))
+                wandb_run.log_artifact(probes_art)
+                print(f"Logged {probes_csv_path} as W&B artifact: {probes_artifact_name}")
+
 
         # --- Post-training Histogram JSD Validation (optional) ---
         hist_val_after_train_cfg = cfg.get("histogram_validation_after_training", {})
