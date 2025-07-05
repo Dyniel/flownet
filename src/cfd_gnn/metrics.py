@@ -231,6 +231,8 @@ def calculate_vorticity_magnitude(points_np: np.ndarray, velocity_np: np.ndarray
         # The .compute_derivative() method computes vorticity and other quantities.
         # It works on PolyData (point clouds) as well.
         # We request vorticity by ensuring 'velocity' is the active vector field.
+        print(f"DEBUG_VORT: Input points_np shape: {points_np.shape}, velocity_np shape: {velocity_np.shape}")
+
         pv_grid.active_vectors_name = 'velocity' # Ensure active vectors are explicitly set before the call
         derivative_dataset = pv_grid.compute_derivative(progress_bar=False)
 
@@ -239,6 +241,8 @@ def calculate_vorticity_magnitude(points_np: np.ndarray, velocity_np: np.ndarray
             # grad = [du/dx, du/dy, du/dz,  dv/dx, dv/dy, dv/dz,  dw/dx, dw/dy, dw/dz]
             # Indices:  0,     1,     2,      3,     4,     5,      6,     7,     8
             grad_tensor_flat = derivative_dataset.point_data['gradient']
+            print(f"DEBUG_VORT: Found 'gradient' array with shape: {grad_tensor_flat.shape}")
+            print(f"DEBUG_VORT: Gradient stats: abs_mean={np.abs(grad_tensor_flat).mean():.4e}, min={grad_tensor_flat.min():.4e}, max={grad_tensor_flat.max():.4e}")
 
             if grad_tensor_flat.shape[1] != 9:
                 print(f"Warning: Gradient tensor has unexpected shape {grad_tensor_flat.shape}. Expected [N, 9]. Returning zeros for vorticity.")

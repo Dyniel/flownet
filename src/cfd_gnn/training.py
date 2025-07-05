@@ -179,13 +179,16 @@ def _log_and_save_field_plots(
                 plt.savefig(buf, format='png')
                 buf.seek(0)
                 log_key_suffix = "_simple" if simple_plot else "_detailed"
-                # Convert buffer to PIL Image before passing to wandb.Image
+                # Key no longer contains epoch number for W&B media panel slider
+                image_log_key = f"{model_name}/Validation_Fields_Sample{current_sample_global_idx}{log_key_suffix}"
                 pil_image = Image.open(buf)
-                wandb_run.log({f"{model_name}/Validation_Fields_Epoch{epoch_num}_Sample{current_sample_global_idx}{log_key_suffix}": wandb.Image(pil_image)})
+                # Log with step=epoch_num and commit=False, so it's part of the main epoch log
+                wandb_run.log({image_log_key: wandb.Image(pil_image)}, step=epoch_num, commit=False)
                 buf.close()
-                pil_image.close() # Close the PIL image
+                pil_image.close()
+
             except Exception as e_wandb_log:
-                print(f"Warning: Could not log W&B field image for sample {current_sample_global_idx} from {path_t1.name}: {e_wandb_log}")
+                print(f"Warning: Could not log W&B field image for sample {current_sample_global_idx} from {path_t1.name} (epoch {epoch_num}): {e_wandb_log}")
 
         plt.close(fig)
 
@@ -353,8 +356,10 @@ def validate_on_pairs(
         "max_pred_vel_mag": []
     }
     # --- Probe Data Initialization ---
-    probe_data_collected = [] # List to store dicts for CSV/Pandas
-    wandb_probe_metrics_for_epoch = {} # Dict for W&B direct logging
+    probe_data_collected = [] # List to store dicts for CSV/Pandas for the detailed CSV file
+    # Data for W&B Table: list of lists/tuples: [case, probe_id, target_x, target_y, target_z, error_mag]
+    wandb_table_probe_errors_data = []
+
     case_probe_definitions = {} # Stores {case_name: [(target_coord_str, node_idx, target_coord_xyz), ...]}
 
 
@@ -518,10 +523,16 @@ def validate_on_pairs(
                     error_vec_probe = true_probe_vel_vals - pred_probe_vel_vals
                     error_probe_mag_val = np.linalg.norm(error_vec_probe)
 
-                    # Store metrics for W&B logging (will be logged in bulk later)
-                    wandb_probe_metrics_for_epoch[f"{model_name}/Probes/{current_case_name}/{target_coord_str}/TrueMag"] = true_probe_mag_val
-                    wandb_probe_metrics_for_epoch[f"{model_name}/Probes/{current_case_name}/{target_coord_str}/PredMag"] = pred_probe_mag_val
-                    wandb_probe_metrics_for_epoch[f"{model_name}/Probes/{current_case_name}/{target_coord_str}/ErrorMag"] = error_probe_mag_val
+                    # Data for W&B Table
+                    wandb_table_probe_errors_data.append([
+                        current_case_name,
+                        target_coord_str,
+                        target_coord_actual_xyz[0],
+                        target_coord_actual_xyz[1],
+                        target_coord_actual_xyz[2],
+                        error_probe_mag_val
+                    ])
+
 
                     # CSV Data Collection (detailed)
                     probe_data_collected.append({
@@ -583,6 +594,12 @@ def validate_on_pairs(
             )
         # --- End VTK and Plotting ---
 
+    # --- Log Probe Error Table to W&B ---
+    if wandb_run and probes_enabled and wandb_table_probe_errors_data:
+        probe_table_columns = ["Case", "ProbeID", "TargetX", "TargetY", "TargetZ", "ErrorMagnitude"]
+        probe_error_table = wandb.Table(columns=probe_table_columns, data=wandb_table_probe_errors_data)
+        wandb_run.log({f"{model_name}/Probes/ErrorMagnitudes_Epoch{epoch_num}": probe_error_table}, step=epoch_num, commit=False) # commit=False, main log call will commit
+
     # --- Aggregation of standard metrics ---
     avg_metrics = {key: float(np.nanmean(values) if len(values) > 0 and np.any(np.isfinite(values)) else np.nan)
                    for key, values in metrics_list.items() if values}
@@ -599,7 +616,9 @@ def validate_on_pairs(
         "val_avg_max_true_vel_mag": avg_metrics.get("max_true_vel_mag", np.nan),
         "val_avg_max_pred_vel_mag": avg_metrics.get("max_pred_vel_mag", np.nan)
     }
-    return return_metrics, probe_data_collected, wandb_probe_metrics_for_epoch
+    # wandb_probe_metrics_for_epoch is no longer returned for direct logging of individual metrics
+    return return_metrics, probe_data_collected
+
 
 
 if __name__ == '__main__':

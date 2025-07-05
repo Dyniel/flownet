@@ -289,17 +289,20 @@ def main():
                 log_field_image_idx = val_during_train_cfg.get("log_field_image_sample_idx", 0)
 
                 # Pass global_cfg to validate_on_pairs for access to all configs including probes
-                val_metrics, epoch_probe_data_for_csv, epoch_probe_data_for_wandb = validate_on_pairs(
+                # It now returns (val_metrics, epoch_probe_data_for_csv)
+                # W&B Table logging for probes is handled inside validate_on_pairs
+                val_metrics, epoch_probe_data_for_csv = validate_on_pairs(
+
                     model=model,
                     val_frame_pairs=val_pairs_during_train,
                     global_cfg=cfg, # Pass the main config dict
                     use_noisy_data_for_val=val_use_noisy_for_run,
                     device=device,
-                    # graph_type and graph_config are now derived inside validate_on_pairs from global_cfg
                     epoch_num=epoch,
                     output_base_dir=run_output_dir,
                     save_fields_vtk=save_fields_vtk_flag,
-                    wandb_run=wandb_run, # wandb_run is still passed for field image logging inside validate_on_pairs
+                    wandb_run=wandb_run,
+
                     log_field_image_sample_idx=log_field_image_idx,
                     model_name=model_name
                 )
@@ -307,9 +310,7 @@ def main():
                     all_probes_data_for_model.extend(epoch_probe_data_for_csv)
 
                 log_dict_epoch.update({f"{model_name}/{k}": v for k,v in val_metrics.items()})
-                if epoch_probe_data_for_wandb: # Merge W&B probe metrics
-                    log_dict_epoch.update(epoch_probe_data_for_wandb)
-
+                # Removed merging of epoch_probe_data_for_wandb as it's handled by Table logging internally
 
                 # Check for improvement (using val_mse as primary metric)
                 if val_metrics.get("val_mse", float('inf')) < best_val_metric:
