@@ -222,6 +222,24 @@ def main():
 
         # Initialize model, optimizer, scheduler
         model_arch_cfg = {**cfg, **cfg.get(f"{model_name}_config", {})} # Allow model-specific overrides
+
+        # --- Logging model and graph parameters ---
+        print(f"DEBUG: Initializing model {model_name} with the following effective parameters:")
+        print(f"  h_dim (hidden_dim): {model_arch_cfg.get('h_dim', 128)}") # Default from FlowNet if not in cfg
+        print(f"  layers (num_gnn_layers): {model_arch_cfg.get('layers', 5)}")
+        print(f"  encoder_mlp_layers: {model_arch_cfg.get('encoder_mlp_layers', 2)}")
+        print(f"  decoder_mlp_layers: {model_arch_cfg.get('decoder_mlp_layers', 2)}")
+        print(f"  gnn_step_mlp_layers: {model_arch_cfg.get('gnn_step_mlp_layers', 2)}")
+        print(f"  node_in_features: {model_arch_cfg.get('node_in_features', 3)}") # Default from FlowNet
+        print(f"  edge_in_features: {model_arch_cfg.get('edge_in_features', 3)}") # Default from FlowNet
+        print(f"  checkpoint_edge_encoder_internals: {model_arch_cfg.get('checkpoint_edge_encoder_internals', False)}") # Default from FlowNet
+
+        graph_cfg_params = cfg.get("graph_config", {})
+        print(f"DEBUG: Graph construction parameters (from 'graph_config'):")
+        print(f"  k (for kNN): {graph_cfg_params.get('k', 'Not set in graph_config, default in data_utils might apply')}")
+        print(f"  down_n (downsampling): {graph_cfg_params.get('down_n', 'Not set, no downsampling or default in data_utils')}")
+        # --- End logging ---
+
         model = models_registry[model_name](model_arch_cfg).to(device)
         optimizer = Adam(model.parameters(), lr=cfg["lr"])
         scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=cfg["patience"] // 2) # Adjusted patience for scheduler
