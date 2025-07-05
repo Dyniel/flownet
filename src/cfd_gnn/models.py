@@ -119,25 +119,12 @@ class BaseFlowGNN(nn.Module):
     def forward(self, data: Data) -> torch.Tensor:
         h_node = self.node_encoder(data.x)
 
-        # Process edge features with optional granular checkpointing
-        if self.checkpoint_edge_encoder_internals:
-            # Apply checkpointing to each layer within the edge_encoder MLP
-            # self.edge_encoder is an nn.Sequential
-            temp_h_edge = data.edge_attr
-            if not temp_h_edge.requires_grad and torch.is_grad_enabled():
-                 # Ensure inputs to checkpointed segments that require grad have requires_grad=True
-                 # This is often needed if data.edge_attr is a leaf tensor from data loader.
-                 # Only set if grads are enabled for the overall computation.
-                temp_h_edge.requires_grad_(True)
-
-            for layer in self.edge_encoder:
-                # Preserve RNG state for checkpoint is important if layers have stochasticity (e.g. Dropout)
-                # and non_reentrant version is used. For Linear/ReLU, it's less critical but good practice.
-                temp_h_edge = checkpoint(layer, temp_h_edge, use_reentrant=False, preserve_rng_state=True)
-            h_edge = temp_h_edge
-        else:
-            # Original behavior or module-level checkpoint (if added back)
-            h_edge = self.edge_encoder(data.edge_attr)
+        # Process edge features. The granular checkpointing for edge_encoder internals
+        # was found to be problematic and did not prevent OOMs if the initial tensor
+        # from data.edge_attr -> hidden_dim was too large.
+        # We now always use the standard forward pass for the edge_encoder.
+        # The self.checkpoint_edge_encoder_internals flag will no longer have an effect.
+        h_edge = self.edge_encoder(data.edge_attr)
 
         for conv_layer in self.convs:
             # Checkpointing GNN steps

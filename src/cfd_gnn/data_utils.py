@@ -325,6 +325,7 @@ def vtk_to_knn_graph(
     # Ensure time tensor is also on CPU
     data.time = torch.tensor([time_value], dtype=torch.float32)
 
+    print(f"DEBUG: Created k-NN graph from {vtk_path}: Nodes={data.num_nodes}, Edges={data.num_edges}")
     return data
 
 def vtk_to_fullmesh_graph(
@@ -424,6 +425,7 @@ def vtk_to_fullmesh_graph(
     # Ensure time tensor is also on CPU
     data.time = torch.tensor([time_value], dtype=torch.float32)
 
+    print(f"DEBUG: Created full_mesh graph from {vtk_path}: Nodes={data.num_nodes}, Edges={data.num_edges}")
     return data
 
 # --------------------------------------------------------------------- #
