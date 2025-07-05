@@ -550,6 +550,7 @@ def validate_on_pairs(
                 vtk_output_dir.mkdir(parents=True, exist_ok=True)
                 vtk_file_path = vtk_output_dir / f"{frame_name_stem}_fields.vtk"
 
+
                 true_vel_np = true_vel_t1.cpu().numpy()
                 pred_vel_np = predicted_vel_t1.cpu().numpy()
                 delta_v_vectors = true_vel_np - pred_vel_np
@@ -558,6 +559,7 @@ def validate_on_pairs(
                     "true_velocity": true_vel_np,
                     "predicted_velocity": pred_vel_np,
                     "delta_velocity_vector": delta_v_vectors, # Add delta_v vector field
+
                     "velocity_error_magnitude": error_mag_for_vtk.cpu().numpy()
                 }
                 if points_np_frame.shape[1] == 3: # Vorticity only for 3D
