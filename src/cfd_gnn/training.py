@@ -354,6 +354,7 @@ def validate_on_pairs(
     }
     # --- Probe Data Initialization ---
     probe_data_collected = [] # List to store dicts for CSV/Pandas
+    wandb_probe_metrics_for_epoch = {} # Dict for W&B direct logging
     case_probe_definitions = {} # Stores {case_name: [(target_coord_str, node_idx, target_coord_xyz), ...]}
 
 
@@ -517,14 +518,12 @@ def validate_on_pairs(
                     error_vec_probe = true_probe_vel_vals - pred_probe_vel_vals
                     error_probe_mag_val = np.linalg.norm(error_vec_probe)
 
-                    if wandb_run:
-                        wandb_log_probe_dict = {
-                            f"{model_name}/Probes/{current_case_name}/{target_coord_str}/TrueMag": true_probe_mag_val,
-                            f"{model_name}/Probes/{current_case_name}/{target_coord_str}/PredMag": pred_probe_mag_val,
-                            f"{model_name}/Probes/{current_case_name}/{target_coord_str}/ErrorMag": error_probe_mag_val,
-                        }
-                        wandb_run.log(wandb_log_probe_dict, step=epoch_num, commit=False)
+                    # Store metrics for W&B logging (will be logged in bulk later)
+                    wandb_probe_metrics_for_epoch[f"{model_name}/Probes/{current_case_name}/{target_coord_str}/TrueMag"] = true_probe_mag_val
+                    wandb_probe_metrics_for_epoch[f"{model_name}/Probes/{current_case_name}/{target_coord_str}/PredMag"] = pred_probe_mag_val
+                    wandb_probe_metrics_for_epoch[f"{model_name}/Probes/{current_case_name}/{target_coord_str}/ErrorMag"] = error_probe_mag_val
 
+                    # CSV Data Collection (detailed)
                     probe_data_collected.append({
                         "epoch": epoch_num, "case": current_case_name,
                         "frame_path_t0": str(path_t0), "frame_time_t0": frame_time_val,
@@ -593,7 +592,7 @@ def validate_on_pairs(
         "val_avg_max_true_vel_mag": avg_metrics.get("max_true_vel_mag", np.nan),
         "val_avg_max_pred_vel_mag": avg_metrics.get("max_pred_vel_mag", np.nan)
     }
-    return return_metrics, probe_data_collected
+    return return_metrics, probe_data_collected, wandb_probe_metrics_for_epoch
 
 
 if __name__ == '__main__':

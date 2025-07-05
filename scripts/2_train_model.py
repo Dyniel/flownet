@@ -289,7 +289,7 @@ def main():
                 log_field_image_idx = val_during_train_cfg.get("log_field_image_sample_idx", 0)
 
                 # Pass global_cfg to validate_on_pairs for access to all configs including probes
-                val_metrics, epoch_probe_data = validate_on_pairs(
+                val_metrics, epoch_probe_data_for_csv, epoch_probe_data_for_wandb = validate_on_pairs(
                     model=model,
                     val_frame_pairs=val_pairs_during_train,
                     global_cfg=cfg, # Pass the main config dict
@@ -299,14 +299,17 @@ def main():
                     epoch_num=epoch,
                     output_base_dir=run_output_dir,
                     save_fields_vtk=save_fields_vtk_flag,
-                    wandb_run=wandb_run,
+                    wandb_run=wandb_run, # wandb_run is still passed for field image logging inside validate_on_pairs
                     log_field_image_sample_idx=log_field_image_idx,
                     model_name=model_name
                 )
-                if epoch_probe_data: # If any probe data was collected this epoch
-                    all_probes_data_for_model.extend(epoch_probe_data)
+                if epoch_probe_data_for_csv: # If any probe data was collected this epoch for CSV
+                    all_probes_data_for_model.extend(epoch_probe_data_for_csv)
 
                 log_dict_epoch.update({f"{model_name}/{k}": v for k,v in val_metrics.items()})
+                if epoch_probe_data_for_wandb: # Merge W&B probe metrics
+                    log_dict_epoch.update(epoch_probe_data_for_wandb)
+
 
                 # Check for improvement (using val_mse as primary metric)
                 if val_metrics.get("val_mse", float('inf')) < best_val_metric:
@@ -378,7 +381,7 @@ def main():
 
             # Log to W&B
             if wandb_run:
-                wandb_run.log(log_dict_epoch)
+                wandb_run.log(log_dict_epoch, step=epoch) # Ensure explicit step is used for the main log call
 
             # Log to CSV
             csv_writer.writerow([
