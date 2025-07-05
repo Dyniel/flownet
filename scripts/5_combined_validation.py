@@ -55,7 +55,10 @@ from src.cfd_gnn.utils import (
     load_config, get_run_name, initialize_wandb, get_device,
     write_vtk_with_fields
 )
+from src.cfd_gnn.metrics import calculate_vorticity_magnitude, calculate_velocity_gradients # For NS quantities
+from src.cfd_gnn.point_slice_analysis import get_points_data, get_slice_data
 import torch.nn.functional as F # For direct MSE
+import pandas as pd
 
 def run_inference_and_basic_metrics(
     model: torch.nn.Module,
@@ -97,8 +100,10 @@ def run_inference_and_basic_metrics(
     # Setup CSV for per-frame-slice metrics
     slice_metrics_csv_path = None
     slice_csv_writer = None
-    if cfg.get("slice_analysis", {}).get("enabled", False):
-        slice_metrics_csv_path = output_pred_dir.parent / f"frame_slice_metrics_{args.model_name}_{args.graph_type}.csv"
+    # The old slice_analysis (bounding box percentage based)
+    old_slice_analysis_enabled = cfg.get("slice_analysis", {}).get("enabled", False)
+    if old_slice_analysis_enabled:
+        slice_metrics_csv_path = output_pred_dir.parent / f"frame_slice_metrics_old_{args.model_name}_{args.graph_type}.csv"
         slice_csv_file = open(slice_metrics_csv_path, "w", newline="")
         slice_csv_writer = csv.writer(slice_csv_file)
         slice_csv_header = [
@@ -107,9 +112,30 @@ def run_inference_and_basic_metrics(
             "max_true_vel_mag", "avg_true_vel_mag", "max_pred_vel_mag", "avg_pred_vel_mag"
         ]
         slice_csv_writer.writerow(slice_csv_header)
-        print(f"Logging detailed per-frame-slice metrics to: {slice_metrics_csv_path}")
-        # For W&B aggregation of slice metrics
-        all_slice_metrics_aggregated = {} # Will store lists of values for each type of slice metric
+        print(f"Logging detailed per-frame-slice metrics (old method) to: {slice_metrics_csv_path}")
+        all_slice_metrics_aggregated = {}
+
+    # New Probe Analysis (Points and Slices)
+    probes_config = cfg.get("analysis_probes", {})
+    points_probe_config = probes_config.get("points", {})
+    slices_probe_config = probes_config.get("slices", {})
+
+    all_point_probe_data = [] # List to store dicts from get_points_data
+    all_slice_probe_data = [] # List to store dicts from get_slice_data
+
+    if points_probe_config.get("enabled", False) and not points_probe_config.get("coordinates"):
+        print("Warning: Point probe analysis is enabled but no coordinates are defined. Disabling.")
+        points_probe_config["enabled"] = False
+
+    if slices_probe_config.get("enabled", False) and not slices_probe_config.get("definitions"):
+        print("Warning: Slice probe analysis is enabled but no slice definitions are provided. Disabling.")
+        slices_probe_config["enabled"] = False
+
+    if points_probe_config.get("enabled", False):
+        print(f"Point probe analysis enabled for {len(points_probe_config.get('coordinates',[]))} points.")
+    if slices_probe_config.get("enabled", False):
+        print(f"Slice probe analysis enabled for {len(slices_probe_config.get('definitions',[]))} slices.")
+
     print(f"Logging detailed per-frame metrics to: {frame_metrics_csv_path}")
 
 
@@ -229,28 +255,22 @@ def run_inference_and_basic_metrics(
                     mse_x, mse_y, mse_z, max_true_vel_mag, max_pred_vel_mag
                 ])
 
-                # Calculate and log slice metrics if enabled
-                if slice_csv_writer: # Implies slice_analysis is enabled
-                    from src.cfd_gnn.metrics import calculate_slice_metrics_for_frame # Lazy import
-
+                # Calculate and log slice metrics if enabled (OLD METHOD)
+                if old_slice_analysis_enabled and slice_csv_writer:
+                    from src.cfd_gnn.metrics import calculate_slice_metrics_for_frame
                     slice_metrics_current_frame = calculate_slice_metrics_for_frame(
-                        points_np=graph.pos.cpu().numpy(), # Ensure points_np is from current graph
+                        points_np=graph.pos.cpu().numpy(),
                         true_velocity_np=true_vel.cpu().numpy(),
-                        pred_velocity_np=predicted_vel.cpu().numpy(), # Already on CPU
+                        pred_velocity_np=predicted_vel.cpu().numpy(),
                         slice_config=cfg.get("slice_analysis")
                     )
+                    # ... (rest of the old slice analysis logging code remains the same) ...
                     for key, value in slice_metrics_current_frame.items():
-                        # key is like "slice_X_0_pos0.12_max_true_vel_mag"
-                        # We need to parse it to store in CSV and aggregate for W&B
-                        parts = key.split('_') # slice, AXIS, IDX, posXXX, METRIC_NAME, ...
+                        parts = key.split('_')
                         if len(parts) >= 5 and parts[0] == "slice":
-                            s_axis = parts[1]
-                            s_idx = parts[2]
-                            s_pos_str = parts[3].replace("pos","")
-                            s_metric_name = "_".join(parts[4:]) # e.g. max_true_vel_mag
-
-                            # For CSV
-                            if s_metric_name == "max_true_vel_mag": # Write one row per slice definition
+                            s_axis = parts[1]; s_idx = parts[2]; s_pos_str = parts[3].replace("pos","")
+                            s_metric_name = "_".join(parts[4:])
+                            if s_metric_name == "max_true_vel_mag":
                                 slice_csv_writer.writerow([
                                     case_name, vtk_path.name, s_axis, s_idx, float(s_pos_str),
                                     slice_metrics_current_frame.get(f"slice_{s_axis}_{s_idx}_pos{float(s_pos_str):.2f}_num_points", 0),
@@ -259,12 +279,107 @@ def run_inference_and_basic_metrics(
                                     slice_metrics_current_frame.get(f"slice_{s_axis}_{s_idx}_pos{float(s_pos_str):.2f}_max_pred_vel_mag", np.nan),
                                     slice_metrics_current_frame.get(f"slice_{s_axis}_{s_idx}_pos{float(s_pos_str):.2f}_avg_pred_vel_mag", np.nan),
                                 ])
-
-                            # For W&B aggregation (overall average for this type of slice_metric)
-                            # e.g. "slice_X_0_max_pred_vel_mag" will average over all frames/cases
                             agg_key = f"slice_{s_axis}_{s_idx}_{s_metric_name}"
-                            if not np.isnan(value): # Only aggregate valid numbers
+                            if not np.isnan(value):
                                 all_slice_metrics_aggregated.setdefault(agg_key, []).append(value)
+
+                # NEW PROBE ANALYSIS (Points and Slices)
+                current_time = graph.time.item() if hasattr(graph, 'time') else np.nan
+                mesh_points_np = graph.pos.cpu().numpy()
+                true_vel_np = true_vel.cpu().numpy()
+                pred_vel_np = predicted_vel.cpu().numpy()
+
+                if points_probe_config.get("enabled", False):
+                    target_coords = points_probe_config.get("coordinates", [])
+                    true_points_data = get_points_data(mesh_points_np, target_coords, true_vel_np, current_time, "true_velocity")
+                    pred_points_data = get_points_data(mesh_points_np, target_coords, pred_vel_np, current_time, "pred_velocity")
+
+                    for i in range(len(true_points_data)):
+                        # Merge true and pred data for the same target point
+                        # Basic data from get_points_data: time, target_point_coords, actual_point_coords, distance_to_actual, true_velocity
+                        merged_point_data = {
+                            "case_name": case_name, "frame_file": vtk_path.name, **true_points_data[i]
+                        }
+                        merged_point_data["pred_velocity"] = pred_points_data[i].get("pred_velocity")
+
+                        # Calculate Vorticity and Gradients for this one point
+                        # Need to use the actual mesh point and its velocity for these calculations
+                        point_coord_for_deriv = np.array([true_points_data[i]["actual_point_coords"]]) # Needs to be [1,3]
+                        true_vel_at_point = np.array([true_points_data[i]["true_velocity"]]) # Needs to be [1,3]
+                        pred_vel_at_point = np.array([pred_points_data[i]["pred_velocity"]]) if pred_points_data[i].get("pred_velocity") else np.array([[np.nan,np.nan,np.nan]])
+
+                        merged_point_data["true_vort_mag"] = calculate_vorticity_magnitude(point_coord_for_deriv, true_vel_at_point)[0] if true_vel_at_point.ndim == 2 else np.nan
+                        merged_point_data["pred_vort_mag"] = calculate_vorticity_magnitude(point_coord_for_deriv, pred_vel_at_point)[0] if pred_vel_at_point.ndim == 2 and not np.isnan(pred_vel_at_point).any() else np.nan
+
+                        true_grads = calculate_velocity_gradients(point_coord_for_deriv, true_vel_at_point) # Shape [1,9] or None
+                        pred_grads = calculate_velocity_gradients(point_coord_for_deriv, pred_vel_at_point) if pred_vel_at_point.ndim == 2 and not np.isnan(pred_vel_at_point).any() else None
+
+                        grad_names = ['dudx', 'dudy', 'dudz', 'dvdx', 'dvdy', 'dvdz', 'dwdx', 'dwdy', 'dwdz']
+                        for g_idx, g_name in enumerate(grad_names):
+                            merged_point_data[f"true_grad_{g_name}"] = true_grads[0, g_idx] if true_grads is not None else np.nan
+                            merged_point_data[f"pred_grad_{g_name}"] = pred_grads[0, g_idx] if pred_grads is not None else np.nan
+
+                        # Calculate divergence: du/dx + dv/dy + dw/dz
+                        merged_point_data["true_divergence"] = (true_grads[0,0] + true_grads[0,4] + true_grads[0,8]) if true_grads is not None else np.nan
+                        merged_point_data["pred_divergence"] = (pred_grads[0,0] + pred_grads[0,4] + pred_grads[0,8]) if pred_grads is not None else np.nan
+
+                        all_point_probe_data.append(merged_point_data)
+
+                if slices_probe_config.get("enabled", False):
+                    axis_map = {"X": 0, "Y": 1, "Z": 2}
+                    for slice_def in slices_probe_config.get("definitions", []):
+                        axis_name = slice_def.get("axis", "X").upper()
+                        slice_axis_idx = axis_map.get(axis_name)
+                        if slice_axis_idx is None:
+                            print(f"Warning: Invalid slice axis '{axis_name}' in probe config. Skipping.")
+                            continue
+
+                        slice_pos = slice_def.get("position", 0.0)
+                        slice_thick = slice_def.get("thickness", 0.01)
+
+                        true_slice_info = get_slice_data(mesh_points_np, true_vel_np, current_time, slice_axis_idx, slice_pos, slice_thick)
+                        pred_slice_info = get_slice_data(mesh_points_np, pred_vel_np, current_time, slice_axis_idx, slice_pos, slice_thick)
+
+                        slice_data_row = {
+                            "case_name": case_name, "frame_file": vtk_path.name, "time": current_time,
+                            "slice_axis": axis_name, "slice_position": slice_pos, "slice_thickness": slice_thick,
+                            "num_points_true": true_slice_info["num_points_in_slice"],
+                            "avg_true_vel_mag": true_slice_info["avg_velocity_magnitude"],
+                            "num_points_pred": pred_slice_info["num_points_in_slice"],
+                            "avg_pred_vel_mag": pred_slice_info["avg_velocity_magnitude"]
+                        }
+
+                        # Vorticity and Gradients/Divergence for slice (average of point values in slice)
+                        if true_slice_info["num_points_in_slice"] > 0:
+                            true_vort_mag_slice = calculate_vorticity_magnitude(true_slice_info["points_in_slice"], true_slice_info["velocities_in_slice"])
+                            slice_data_row["avg_true_vort_mag_slice"] = np.mean(true_vort_mag_slice) if true_vort_mag_slice is not None else np.nan
+
+                            true_grads_slice = calculate_velocity_gradients(true_slice_info["points_in_slice"], true_slice_info["velocities_in_slice"])
+                            if true_grads_slice is not None:
+                                true_divergence_slice = true_grads_slice[:,0] + true_grads_slice[:,4] + true_grads_slice[:,8]
+                                slice_data_row["avg_true_divergence_slice"] = np.mean(true_divergence_slice)
+                                # Could average individual gradient components if needed: np.mean(true_grads_slice[:,i])
+                            else:
+                                slice_data_row["avg_true_divergence_slice"] = np.nan
+                        else:
+                            slice_data_row["avg_true_vort_mag_slice"] = np.nan
+                            slice_data_row["avg_true_divergence_slice"] = np.nan
+
+                        if pred_slice_info["num_points_in_slice"] > 0 and not np.isnan(pred_slice_info["velocities_in_slice"]).any():
+                            pred_vort_mag_slice = calculate_vorticity_magnitude(pred_slice_info["points_in_slice"], pred_slice_info["velocities_in_slice"])
+                            slice_data_row["avg_pred_vort_mag_slice"] = np.mean(pred_vort_mag_slice) if pred_vort_mag_slice is not None else np.nan
+
+                            pred_grads_slice = calculate_velocity_gradients(pred_slice_info["points_in_slice"], pred_slice_info["velocities_in_slice"])
+                            if pred_grads_slice is not None:
+                                pred_divergence_slice = pred_grads_slice[:,0] + pred_grads_slice[:,4] + pred_grads_slice[:,8]
+                                slice_data_row["avg_pred_divergence_slice"] = np.mean(pred_divergence_slice)
+                            else:
+                                slice_data_row["avg_pred_divergence_slice"] = np.nan
+                        else:
+                            slice_data_row["avg_pred_vort_mag_slice"] = np.nan
+                            slice_data_row["avg_pred_divergence_slice"] = np.nan
+
+                        all_slice_probe_data.append(slice_data_row)
 
                 # Save prediction VTK
                 frame_base_name = vtk_path.stem
@@ -279,7 +394,29 @@ def run_inference_and_basic_metrics(
                 # import traceback; traceback.print_exc() # For debugging
                 continue
 
-    if slice_csv_writer: # Close slice metrics CSV if it was opened
+    # After processing all frames for all cases, save collected probe data
+    if points_probe_config.get("enabled", False) and all_point_probe_data:
+        df_points = pd.DataFrame(all_point_probe_data)
+        points_csv_path = output_pred_dir.parent / f"probed_points_data_{args.model_name}_{args.graph_type}.csv"
+        df_points.to_csv(points_csv_path, index=False)
+        print(f"Saved probed points data to: {points_csv_path}")
+        if wandb_run:
+            art_points_probe = wandb.Artifact(f"probed_points_data_{args.model_name}_{args.graph_type}", type="probed_points_timeseries")
+            art_points_probe.add_file(str(points_csv_path))
+            wandb_run.log_artifact(art_points_probe)
+
+    if slices_probe_config.get("enabled", False) and all_slice_probe_data:
+        df_slices = pd.DataFrame(all_slice_probe_data)
+        slices_csv_path = output_pred_dir.parent / f"probed_slices_data_{args.model_name}_{args.graph_type}.csv"
+        df_slices.to_csv(slices_csv_path, index=False)
+        print(f"Saved probed slices data to: {slices_csv_path}")
+        if wandb_run:
+            art_slices_probe = wandb.Artifact(f"probed_slices_data_{args.model_name}_{args.graph_type}", type="probed_slices_timeseries")
+            art_slices_probe.add_file(str(slices_csv_path))
+            wandb_run.log_artifact(art_slices_probe)
+
+
+    if old_slice_analysis_enabled and slice_csv_writer: # Close slice metrics CSV if it was opened
         slice_csv_file.close()
 
     detailed_csv_file.close() # Close the detailed CSV
@@ -313,33 +450,32 @@ def run_inference_and_basic_metrics(
                 summary_per_case_metrics[f"PerCase/{args.model_name}/{case_name_processed}/{metric_name}_std"] = std_val
                 print(f"      Avg {metric_name}: {mean_val:.4e} ± {std_val:.4e} (n={len(values_for_case)})")
 
-    # 3. Aggregated Slice Metrics for W&B
+    # 3. Aggregated Slice Metrics for W&B (OLD METHOD)
     summary_slice_metrics_wandb = {}
-    if cfg.get("slice_analysis", {}).get("enabled", False) and all_slice_metrics_aggregated:
-        print(f"\n  Aggregated Slice Metrics ({args.model_name}, Graph: {args.graph_type}):")
+    if old_slice_analysis_enabled and all_slice_metrics_aggregated:
+        print(f"\n  Aggregated Slice Metrics (Old Method) ({args.model_name}, Graph: {args.graph_type}):")
         for agg_key, values_list in all_slice_metrics_aggregated.items():
             if values_list:
                 mean_val = float(np.mean(values_list))
                 std_val = float(np.std(values_list))
-                # e.g. WandB key: SliceMetrics/FlowNet/slice_X_0_max_pred_vel_mag_mean
-                summary_slice_metrics_wandb[f"SliceMetrics/{args.model_name}/{agg_key}_mean"] = mean_val
-                summary_slice_metrics_wandb[f"SliceMetrics/{args.model_name}/{agg_key}_std"] = std_val
+                summary_slice_metrics_wandb[f"SliceMetricsOld/{args.model_name}/{agg_key}_mean"] = mean_val
+                summary_slice_metrics_wandb[f"SliceMetricsOld/{args.model_name}/{agg_key}_std"] = std_val
                 print(f"    {agg_key}: Mean={mean_val:.4e}, Std={std_val:.4e} (n={len(values_list)})")
 
+    # (No specific W&B summary logging for new probe data here, as it's saved as artifacts)
 
     if wandb_run:
         if summary_overall_metrics:
             wandb_run.log(summary_overall_metrics)
         if summary_per_case_metrics:
             wandb_run.log(summary_per_case_metrics)
-        if summary_slice_metrics_wandb:
+        if summary_slice_metrics_wandb: # For old slice metrics
             wandb_run.log(summary_slice_metrics_wandb)
 
-        if slice_metrics_csv_path and slice_metrics_csv_path.exists():
-            art_slice_metrics = wandb.Artifact(f"frame_slice_metrics_{args.model_name}_{args.graph_type}", type="per_frame_slice_metrics")
+        if old_slice_analysis_enabled and slice_metrics_csv_path and slice_metrics_csv_path.exists():
+            art_slice_metrics = wandb.Artifact(f"frame_slice_metrics_old_{args.model_name}_{args.graph_type}", type="per_frame_slice_metrics_old")
             art_slice_metrics.add_file(str(slice_metrics_csv_path))
             wandb_run.log_artifact(art_slice_metrics)
-
 
     return summary_overall_metrics # Return overall summary for the main CSV
 
