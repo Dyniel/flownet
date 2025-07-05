@@ -223,8 +223,9 @@ def train_single_epoch(
     num_batches = 0
 
     for graph_t0, graph_t1 in train_loader:
+        # Move data to the target device within the training loop
         graph_t0 = graph_t0.to(device)
-        graph_t1 = graph_t1.to(device)  # True velocities are in graph_t1.x
+        graph_t1 = graph_t1.to(device)
 
         optimizer.zero_grad()
 
@@ -358,33 +359,41 @@ def validate_on_pairs(
                 "velocity_key": graph_config.get("velocity_key", "U"),
                 "noisy_velocity_key_suffix": graph_config.get("noisy_velocity_key_suffix", "_noisy"),
             }
-            graph_t0 = vtk_to_knn_graph(
+            # Prepare arguments for vtk_to_knn_graph carefully, mapping 'k' from config
+            knn_args = {
+                "k_neighbors": graph_config["k"],  # Map 'k' from config to 'k_neighbors'
+                "downsample_n": graph_config.get("down_n"),
+                "velocity_key": graph_config.get("velocity_key", "U"),
+                "noisy_velocity_key_suffix": graph_config.get("noisy_velocity_key_suffix", "_noisy"),
+            }
+            graph_t0_cpu = vtk_to_knn_graph( # Graph created on CPU
                 path_t0,
-                **knn_args,  # Pass mapped and other relevant args from graph_config
-                use_noisy_data=use_noisy_data_for_val,
-                device=device
+                **knn_args,
+                use_noisy_data=use_noisy_data_for_val # Removed device from here
             )
-            graph_t1 = vtk_to_knn_graph(  # Target graph, usually consistent noise setting
+            graph_t1_cpu = vtk_to_knn_graph(  # Graph created on CPU
                 path_t1,
                 **knn_args,
-                use_noisy_data=use_noisy_data_for_val,
-                device=device
+                use_noisy_data=use_noisy_data_for_val # Removed device from here
             )
         elif graph_type == "full_mesh":
-            # For full_mesh, graph_config might contain different keys (e.g. velocity_key, pressure_key)
-            graph_t0 = vtk_to_fullmesh_graph(
+            graph_t0_cpu = vtk_to_fullmesh_graph( # Graph created on CPU
                 path_t0, velocity_key=graph_config.get("velocity_key", "U"),
-                pressure_key=graph_config.get("pressure_key", "p"), device=device
+                pressure_key=graph_config.get("pressure_key", "p") # Removed device
             )
-            graph_t1 = vtk_to_fullmesh_graph(  # Target graph
+            graph_t1_cpu = vtk_to_fullmesh_graph(  # Graph created on CPU
                 path_t1, velocity_key=graph_config.get("velocity_key", "U"),
-                pressure_key=graph_config.get("pressure_key", "p"), device=device
+                pressure_key=graph_config.get("pressure_key", "p") # Removed device
             )
         else:
             raise ValueError(f"Unsupported graph_type for validation: {graph_type}")
 
+        # Move graphs to device before model inference
+        graph_t0 = graph_t0_cpu.to(device)
+        graph_t1 = graph_t1_cpu.to(device) # Also move graph_t1 for consistency if its attributes are used
+
         predicted_vel_t1 = model(graph_t0)
-        true_vel_t1 = graph_t1.x.to(device)  # Ensure target is on the same device
+        true_vel_t1 = graph_t1.x # Already on device due to graph_t1.to(device)
 
         # MSE for velocity vectors (overall)
         mse = F.mse_loss(predicted_vel_t1, true_vel_t1).item()

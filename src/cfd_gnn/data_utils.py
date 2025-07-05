@@ -228,13 +228,13 @@ def vtk_to_knn_graph(
     velocity_key: str = "U", # Key for velocity in point_data
     noisy_velocity_key_suffix: str = "_noisy", # Suffix if using noisy data
     use_noisy_data: bool = False, # If true, tries to use "U_noisy" (or similar)
-    device: torch.device | str = "cpu",
+    # device: torch.device | str = "cpu", # Removed: tensors will be created on CPU
     frame_idx: int = 0, # Frame index in sequence, for fixed_dt time calculation
     time_extraction_config: dict | None = None # Config for time extraction
 ) -> Data:
     """
     Loads a VTK file, optionally downsamples, builds a k-NN graph,
-    and returns a PyTorch Geometric Data object.
+    and returns a PyTorch Geometric Data object with tensors on CPU.
 
     Args:
         vtk_path: Path to the VTK file.
@@ -244,10 +244,11 @@ def vtk_to_knn_graph(
         noisy_velocity_key_suffix: Suffix appended to velocity_key if use_noisy_data is True.
         use_noisy_data: If True, attempts to load noisy velocity (e.g., "U_noisy").
                         Falls back to base velocity_key if noisy key is not found.
-        device: PyTorch device to move tensors to.
+        frame_idx: Frame index used for time calculation if 'fixed_dt' method is used.
+        time_extraction_config: Configuration for time extraction logic.
 
     Returns:
-        PyTorch Geometric Data object with x, pos, edge_index, edge_attr.
+        PyTorch Geometric Data object with x, pos, edge_index, edge_attr on CPU.
     """
     mesh = meshio.read(str(vtk_path))
     points = mesh.points.astype(np.float32)
@@ -311,17 +312,17 @@ def vtk_to_knn_graph(
         relative_positions = np.empty((0, points.shape[1]), dtype=np.float32)
 
 
-    return Data(
-        x=torch.from_numpy(velocities).to(device),
-        pos=torch.from_numpy(points).to(device),
-        edge_index=torch.from_numpy(edge_index_np).to(device),
-        edge_attr=torch.from_numpy(relative_positions).to(device),
+    data = Data(
+        x=torch.from_numpy(velocities),
+        pos=torch.from_numpy(points),
+        edge_index=torch.from_numpy(edge_index_np),
+        edge_attr=torch.from_numpy(relative_positions),
         path=str(vtk_path) # Store path for reference
-        # Time will be added below
     )
 
     time_value = _extract_time_from_mesh(mesh, vtk_path, frame_idx,
                                          time_extraction_config or DEFAULT_TIME_EXTRACTION_CONFIG)
+    # Ensure time tensor is also on CPU
     data.time = torch.tensor([time_value], dtype=torch.float32)
 
     return data
@@ -330,22 +331,23 @@ def vtk_to_fullmesh_graph(
     vtk_path: str | Path,
     velocity_key: str = "U",
     pressure_key: str = "p", # For normalized pressure calculation
-    device: torch.device | str = "cpu",
+    # device: torch.device | str = "cpu", # Removed: tensors will be created on CPU
     frame_idx: int = 0, # Frame index in sequence, for fixed_dt time calculation
     time_extraction_config: dict | None = None # Config for time extraction
 ) -> Data:
     """
-    Loads a VTK file and builds a graph from its tetrahedral cell connectivity.
-    Also calculates normalized pressure and includes it in the Data object.
+    Loads a VTK file and builds a graph from its tetrahedral cell connectivity
+    with tensors on CPU. Also calculates normalized pressure.
 
     Args:
         vtk_path: Path to the VTK file.
         velocity_key: Key for velocity data in point_data.
         pressure_key: Key for pressure data in point_data.
-        device: PyTorch device.
+        frame_idx: Frame index used for time calculation if 'fixed_dt' method is used.
+        time_extraction_config: Configuration for time extraction logic.
 
     Returns:
-        PyTorch Geometric Data object.
+        PyTorch Geometric Data object on CPU.
     """
     mesh = meshio.read(str(vtk_path))
 
@@ -408,18 +410,18 @@ def vtk_to_fullmesh_graph(
 
 
     data = Data(
-        x=torch.from_numpy(velocities).to(device),
-        pos=torch.from_numpy(points).to(device),
-        edge_index=torch.from_numpy(edge_index_np).to(device),
-        edge_attr=torch.from_numpy(relative_positions).to(device),
-        p_norm=torch.from_numpy(normalized_pressure.astype(np.float32)).to(device),
-        inlet_idx=torch.tensor(inlet_idx, device=device, dtype=torch.long),
+        x=torch.from_numpy(velocities),
+        pos=torch.from_numpy(points),
+        edge_index=torch.from_numpy(edge_index_np),
+        edge_attr=torch.from_numpy(relative_positions),
+        p_norm=torch.from_numpy(normalized_pressure.astype(np.float32)),
+        inlet_idx=torch.tensor(inlet_idx, dtype=torch.long), # Removed device
         path=str(vtk_path)
-        # Time will be added below
     )
 
     time_value = _extract_time_from_mesh(mesh, vtk_path, frame_idx,
                                          time_extraction_config or DEFAULT_TIME_EXTRACTION_CONFIG)
+    # Ensure time tensor is also on CPU
     data.time = torch.tensor([time_value], dtype=torch.float32)
 
     return data
@@ -467,17 +469,17 @@ def make_frame_pairs(data_root: str | Path, case_glob: str = "sUbend*") -> list[
 class PairedFrameDataset(Dataset):
     """
     PyTorch Geometric Dataset for pairs of consecutive CFD frames.
-    Each item consists of two graphs (graph_t0, graph_t1).
+    Each item consists of two graphs (graph_t0, graph_t1), created on CPU.
     """
     def __init__(self, frame_pairs: list[tuple[Path, Path]], graph_config: dict,
                  graph_type: str = "knn", # "knn" or "full_mesh"
-                 use_noisy_data: bool = False, device: str | torch.device = "cpu",
+                 use_noisy_data: bool = False, # device: str | torch.device = "cpu", # Removed
                  time_extraction_config: dict | None = None): # Added time_extraction_config
         super().__init__()
         self.frame_pairs = frame_pairs
         self.graph_config = graph_config
         self.use_noisy_data = use_noisy_data
-        self.device = device
+        # self.device = device # This will be removed
         self.graph_type = graph_type
         # Store a merged config: start with default, update with user's if provided
         self.time_extraction_config = DEFAULT_TIME_EXTRACTION_CONFIG.copy()
@@ -524,7 +526,7 @@ class PairedFrameDataset(Dataset):
                 velocity_key=self.graph_config.get("velocity_key", "U"),
                 noisy_velocity_key_suffix=self.graph_config.get("noisy_velocity_key_suffix", "_noisy"),
                 use_noisy_data=self.use_noisy_data,
-                device=self.device,
+                # device=self.device, # Removed
                 **common_args_t0
             )
             graph_t1 = vtk_to_knn_graph(
@@ -534,7 +536,7 @@ class PairedFrameDataset(Dataset):
                 velocity_key=self.graph_config.get("velocity_key", "U"),
                 noisy_velocity_key_suffix=self.graph_config.get("noisy_velocity_key_suffix", "_noisy"),
                 use_noisy_data=self.use_noisy_data, # Target typically matches input noise status
-                device=self.device,
+                # device=self.device, # Removed
                 **common_args_t1
             )
         elif self.graph_type == "full_mesh":
@@ -542,14 +544,14 @@ class PairedFrameDataset(Dataset):
                 path_t0,
                 velocity_key=self.graph_config.get("velocity_key", "U"),
                 pressure_key=self.graph_config.get("pressure_key", "p"),
-                device=self.device,
+                # device=self.device, # Removed
                 **common_args_t0
             )
             graph_t1 = vtk_to_fullmesh_graph(
                 path_t1,
                 velocity_key=self.graph_config.get("velocity_key", "U"),
                 pressure_key=self.graph_config.get("pressure_key", "p"),
-                device=self.device,
+                # device=self.device, # Removed
                 **common_args_t1
             )
         else:
