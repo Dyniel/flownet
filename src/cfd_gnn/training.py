@@ -25,6 +25,7 @@ import matplotlib.pyplot as plt
 from scipy.spatial import Delaunay
 import io
 import wandb
+from PIL import Image # Import PIL Image
 
 # New helper function for plotting:
 def _log_and_save_field_plots(
@@ -178,8 +179,11 @@ def _log_and_save_field_plots(
                 plt.savefig(buf, format='png')
                 buf.seek(0)
                 log_key_suffix = "_simple" if simple_plot else "_detailed"
-                wandb_run.log({f"{model_name}/Validation_Fields_Epoch{epoch_num}_Sample{current_sample_global_idx}{log_key_suffix}": wandb.Image(buf)})
+                # Convert buffer to PIL Image before passing to wandb.Image
+                pil_image = Image.open(buf)
+                wandb_run.log({f"{model_name}/Validation_Fields_Epoch{epoch_num}_Sample{current_sample_global_idx}{log_key_suffix}": wandb.Image(pil_image)})
                 buf.close()
+                pil_image.close() # Close the PIL image
             except Exception as e_wandb_log:
                 print(f"Warning: Could not log W&B field image for sample {current_sample_global_idx} from {path_t1.name}: {e_wandb_log}")
 

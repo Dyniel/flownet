@@ -228,10 +228,11 @@ def calculate_vorticity_magnitude(points_np: np.ndarray, velocity_np: np.ndarray
             return np.zeros(points_np.shape[0], dtype=np.float32)
 
         # Compute derivatives including vorticity
-        # The .derivatives() filter computes vorticity and other quantities.
-        # It's generally preferred over older compute_derivative_of_point_data.
+        # The .compute_derivative() method computes vorticity and other quantities.
         # It works on PolyData (point clouds) as well.
-        derivative_dataset = pv_grid.derivative(scalars=None, vectors='velocity', faster=False, progress_bar=False)
+        # We request vorticity by ensuring 'velocity' is the active vector field.
+        # The compute_derivative method directly adds a 'vorticity' array.
+        derivative_dataset = pv_grid.compute_derivative(progress_bar=False) # `scalars` and `vectors` args might not be needed if active vectors are set.
 
         if 'vorticity' in derivative_dataset.point_data:
             vorticity_vectors = derivative_dataset.point_data['vorticity']
@@ -551,7 +552,8 @@ def calculate_velocity_gradients(points_np: np.ndarray, velocity_np: np.ndarray)
         # Compute derivatives. The 'gradient' field will be a 9-component vector (tensor flattened row-wise).
         # For 3D velocity U=(u,v,w) and points (x,y,z):
         # gradient = [du/dx, du/dy, du/dz, dv/dx, dv/dy, dv/dz, dw/dx, dw/dy, dw/dz]
-        derivative_dataset = pv_grid.derivative(scalars=None, vectors='velocity', gradient='gradient', faster=False, progress_bar=False)
+        # pv_grid should have 'velocity' as active vectors from _create_pyvista_grid
+        derivative_dataset = pv_grid.compute_derivative(progress_bar=False)
 
         if 'gradient' in derivative_dataset.point_data:
             grad_tensor_flat = derivative_dataset.point_data['gradient'] # Shape [num_points, 9]
