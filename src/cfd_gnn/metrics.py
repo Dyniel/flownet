@@ -231,8 +231,8 @@ def calculate_vorticity_magnitude(points_np: np.ndarray, velocity_np: np.ndarray
         # The .compute_derivative() method computes vorticity and other quantities.
         # It works on PolyData (point clouds) as well.
         # We request vorticity by ensuring 'velocity' is the active vector field.
-        # The compute_derivative method directly adds a 'vorticity' array.
-        derivative_dataset = pv_grid.compute_derivative(progress_bar=False) # `scalars` and `vectors` args might not be needed if active vectors are set.
+        pv_grid.active_vectors_name = 'velocity' # Ensure active vectors are explicitly set before the call
+        derivative_dataset = pv_grid.compute_derivative(progress_bar=False)
 
         if 'vorticity' in derivative_dataset.point_data:
             vorticity_vectors = derivative_dataset.point_data['vorticity']
@@ -245,7 +245,11 @@ def calculate_vorticity_magnitude(points_np: np.ndarray, velocity_np: np.ndarray
                 vorticity_magnitude = np.linalg.norm(vorticity_vectors, axis=1)
             return vorticity_magnitude.astype(np.float32)
         else:
-            print("Warning: 'vorticity' field not found after PyVista derivative computation. Returning zeros.")
+            print("Warning: 'vorticity' field not found after PyVista derivative computation.")
+            if derivative_dataset is not None and hasattr(derivative_dataset, 'point_data'):
+                print(f"DEBUG: Available arrays in derivative_dataset point_data: {list(derivative_dataset.point_data.keys())}")
+            else:
+                print("DEBUG: derivative_dataset or derivative_dataset.point_data is None.")
             return np.zeros(points_np.shape[0], dtype=np.float32)
 
     except Exception as e:
@@ -552,7 +556,7 @@ def calculate_velocity_gradients(points_np: np.ndarray, velocity_np: np.ndarray)
         # Compute derivatives. The 'gradient' field will be a 9-component vector (tensor flattened row-wise).
         # For 3D velocity U=(u,v,w) and points (x,y,z):
         # gradient = [du/dx, du/dy, du/dz, dv/dx, dv/dy, dv/dz, dw/dx, dw/dy, dw/dz]
-        # pv_grid should have 'velocity' as active vectors from _create_pyvista_grid
+        pv_grid.active_vectors_name = 'velocity' # Ensure active vectors are explicitly set before the call
         derivative_dataset = pv_grid.compute_derivative(progress_bar=False)
 
         if 'gradient' in derivative_dataset.point_data:
@@ -569,7 +573,11 @@ def calculate_velocity_gradients(points_np: np.ndarray, velocity_np: np.ndarray)
                  return None
             return grad_tensor_flat.astype(np.float32)
         else:
-            print("Warning: 'gradient' field not found after PyVista derivative computation. Returning None.")
+            print("Warning: 'gradient' field not found after PyVista derivative computation.")
+            if derivative_dataset is not None and hasattr(derivative_dataset, 'point_data'):
+                print(f"DEBUG: Available arrays in derivative_dataset point_data: {list(derivative_dataset.point_data.keys())}")
+            else:
+                print("DEBUG: derivative_dataset or derivative_dataset.point_data is None.")
             return None
 
     except Exception as e:
