@@ -221,6 +221,7 @@ def calculate_vorticity_magnitude(points_np: np.ndarray, velocity_np: np.ndarray
         if points_np.shape[0] == 0:  # No points, no vorticity
             return np.array([], dtype=np.float32)
 
+        print(f"DEBUG_VORT_INPUT_VEL: Shape={velocity_np.shape}, AbsMean={np.abs(velocity_np).mean():.4e}, Min={velocity_np.min():.4e}, Max={velocity_np.max():.4e}, Std={velocity_np.std():.4e}")
         pv_grid = _create_pyvista_grid(points_np, velocity_np)
 
         if "velocity" not in pv_grid.point_data:

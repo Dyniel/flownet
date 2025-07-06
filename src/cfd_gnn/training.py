@@ -359,7 +359,6 @@ def validate_on_pairs(
     probe_data_collected = [] # List to store dicts for CSV/Pandas for the detailed CSV file
     # Data for W&B Table: list of lists/tuples: [case, probe_id, target_x, target_y, target_z, error_mag]
     wandb_table_probe_errors_data = []
-
     case_probe_definitions = {} # Stores {case_name: [(target_coord_str, node_idx, target_coord_xyz), ...]}
 
 
@@ -533,7 +532,6 @@ def validate_on_pairs(
                         error_probe_mag_val
                     ])
 
-
                     # CSV Data Collection (detailed)
                     probe_data_collected.append({
                         "epoch": epoch_num, "case": current_case_name,
@@ -560,7 +558,6 @@ def validate_on_pairs(
                 vtk_output_dir = Path(output_base_dir) / "validation_fields" / model_name / epoch_folder_name / current_case_name
                 vtk_output_dir.mkdir(parents=True, exist_ok=True)
                 vtk_file_path = vtk_output_dir / f"{frame_name_stem}_fields.vtk"
-
 
                 true_vel_np = true_vel_t1.cpu().numpy()
                 pred_vel_np = predicted_vel_t1.cpu().numpy()
