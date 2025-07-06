@@ -199,6 +199,7 @@ def main():
         "val_mse", "val_rmse_mag", "val_mse_div", "val_cosine_sim",
         "val_mse_x", "val_mse_y", "val_mse_z",
         "val_perc_points_within_10_rel_err", # Added new metric
+
         # "val_mse_vorticity_mag", # Removed
         "val_avg_max_true_vel_mag", "val_avg_max_pred_vel_mag",
         "lr", "sample_rel_tke_err", "sample_cosine_sim"
@@ -394,6 +395,7 @@ def main():
                 val_metrics.get("val_mse_div", np.nan), val_metrics.get("val_cosine_sim", np.nan),
                 val_metrics.get("val_mse_x", np.nan), val_metrics.get("val_mse_y", np.nan), val_metrics.get("val_mse_z", np.nan),
                 val_metrics.get("val_perc_points_within_10_rel_err", np.nan), # Added new metric
+
                 # val_metrics.get("val_mse_vorticity_mag", np.nan), # Removed
                 val_metrics.get("val_avg_max_true_vel_mag", np.nan),
                 val_metrics.get("val_avg_max_pred_vel_mag", np.nan),

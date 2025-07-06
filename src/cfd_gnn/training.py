@@ -60,6 +60,7 @@ def _log_and_save_field_plots(
     error_mag_np = error_mag_tensor.cpu().numpy() # This is ||true - pred||
     pred_div_np = pred_div_tensor.cpu().numpy() if pred_div_tensor is not None else None
 
+
     # Determine slice for 2D plotting (e.g., points near z=mean(z) or just XY if 2D)
     slice_points_2d = None
     fields_to_plot_on_slice = {}
@@ -99,6 +100,7 @@ def _log_and_save_field_plots(
                  fields_to_plot_on_slice["Points within 10% RelErr"] = point_compliance_np[slice_indices].astype(float) # Convert bool to float for plotting
             else:
                 print(f"Warning: point_compliance_np shape mismatch ({point_compliance_np.shape[0]}) vs points_np ({points_np.shape[0]}) for sample {current_sample_global_idx}. Skipping compliance plot.")
+
 
     num_subplots = len(fields_to_plot_on_slice)
     if num_subplots == 0:
@@ -366,7 +368,6 @@ def validate_on_pairs(
     wandb_table_probe_errors_data = []
     case_probe_definitions = {} # Stores {case_name: [(target_coord_str, node_idx, target_coord_xyz), ...]}
 
-
     from .data_utils import vtk_to_knn_graph, vtk_to_fullmesh_graph # Local import
     from .metrics import cosine_similarity_metric, calculate_perc_points_within_rel_error # Import new metric
     from sklearn.neighbors import NearestNeighbors # For probe point finding
@@ -590,6 +591,7 @@ def validate_on_pairs(
                 #     if true_vort_mag_np is not None: point_data_for_vtk["true_vorticity_magnitude"] = true_vort_mag_np
                 #     if pred_vort_mag_np is not None: point_data_for_vtk["predicted_vorticity_magnitude"] = pred_vort_mag_np
 
+
                 write_vtk_with_fields(str(vtk_file_path), points_np_frame, point_data_for_vtk)
             except Exception as e_vtk:
                 print(f"Warning: Could not save detailed VTK fields for {path_t1.name}: {e_vtk}")
@@ -626,6 +628,7 @@ def validate_on_pairs(
         "val_mse_z": avg_metrics.get("mse_z", np.nan),
         # "val_mse_vorticity_mag": avg_metrics.get("mse_vorticity_mag", np.nan), # Removed
         "val_perc_points_within_10_rel_err": avg_metrics.get("perc_points_within_10_rel_err", np.nan), # Add new metric
+
         "val_cosine_sim": avg_metrics.get("cosine_sim", np.nan),
         "val_avg_max_true_vel_mag": avg_metrics.get("max_true_vel_mag", np.nan),
         "val_avg_max_pred_vel_mag": avg_metrics.get("max_pred_vel_mag", np.nan)
