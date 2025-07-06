@@ -33,6 +33,8 @@ import sys
 import shutil
 import wandb
 import pandas as pd # For saving probe data
+import numpy as np # For np.nan
+
 
 import torch
 from torch.optim import Adam
@@ -197,8 +199,8 @@ def main():
         "train_loss_total", "train_loss_sup", "train_loss_div", "train_loss_hist", "train_loss_reg",
         "val_mse", "val_rmse_mag", "val_mse_div", "val_cosine_sim",
         "val_mse_x", "val_mse_y", "val_mse_z",
-        "val_mse_vorticity_mag",
-        "val_avg_max_true_vel_mag", "val_avg_max_pred_vel_mag", # Added max velocity metrics
+        # "val_mse_vorticity_mag", # Removed
+        "val_avg_max_true_vel_mag", "val_avg_max_pred_vel_mag",
         "lr", "sample_rel_tke_err", "sample_cosine_sim"
     ]
     csv_writer.writerow(csv_header)
@@ -389,10 +391,12 @@ def main():
                 epoch, model_name,
                 train_metrics["total"], train_metrics["supervised"],
                 train_metrics["divergence"], train_metrics["histogram"], train_metrics["regularization"],
-                val_metrics.get("val_mse", -1), val_metrics.get("val_rmse_mag", -1), val_metrics.get("val_mse_div", -1), val_metrics.get("val_cosine_sim", -1),
-                val_metrics.get("val_mse_x", -1), val_metrics.get("val_mse_y", -1), val_metrics.get("val_mse_z", -1),
-                val_metrics.get("val_mse_vorticity_mag", -1),
-                val_metrics.get("val_avg_max_true_vel_mag", -1), val_metrics.get("val_avg_max_pred_vel_mag", -1), # Added max velocity
+                val_metrics.get("val_mse", np.nan), val_metrics.get("val_rmse_mag", np.nan),
+                val_metrics.get("val_mse_div", np.nan), val_metrics.get("val_cosine_sim", np.nan),
+                val_metrics.get("val_mse_x", np.nan), val_metrics.get("val_mse_y", np.nan), val_metrics.get("val_mse_z", np.nan),
+                # val_metrics.get("val_mse_vorticity_mag", np.nan), # Removed
+                val_metrics.get("val_avg_max_true_vel_mag", np.nan),
+                val_metrics.get("val_avg_max_pred_vel_mag", np.nan),
                 current_lr, sample_rel_tke_err, sample_cos_sim
             ])
             csv_file.flush() # Ensure data is written

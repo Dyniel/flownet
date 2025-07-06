@@ -34,8 +34,7 @@ def _log_and_save_field_plots(
     pred_vel_tensor: torch.Tensor,
     error_mag_tensor: torch.Tensor,
     pred_div_tensor: torch.Tensor,
-    # true_vort_mag_np: np.ndarray | None, # Optional, if we want to plot true vorticity
-    pred_vort_mag_np: np.ndarray | None,
+    # pred_vort_mag_np: np.ndarray | None, # Removed vorticity from plots for now
     path_t1: Path, # For naming output files
     epoch_num: int,
     current_sample_global_idx: int, # Index of the sample in the validation dataloader
@@ -61,7 +60,6 @@ def _log_and_save_field_plots(
     pred_vel_mag_np = pred_vel_tensor.norm(dim=1).cpu().numpy()
     error_mag_np = error_mag_tensor.cpu().numpy()
     pred_div_np = pred_div_tensor.cpu().numpy() if pred_div_tensor is not None else None # Handle optional div
-    # pred_vort_mag_np is already numpy or None
 
     # Determine slice for 2D plotting (e.g., points near z=mean(z) or just XY if 2D)
     slice_points_2d = None
@@ -96,11 +94,12 @@ def _log_and_save_field_plots(
     if not simple_plot:
         if pred_div_np is not None:
             fields_to_plot_on_slice["Pred Divergence"] = pred_div_np[slice_indices]
-        if pred_vort_mag_np is not None and is_3d_data:
-             if pred_vort_mag_np.shape[0] == points_np.shape[0]:
-                fields_to_plot_on_slice["Pred Vorticity Mag"] = pred_vort_mag_np[slice_indices]
-             else:
-                print(f"Warning: Vorticity array shape mismatch for sample {current_sample_global_idx} from {path_t1.name}. Skipping vorticity plot.")
+        # Vorticity plotting removed
+        # if pred_vort_mag_np is not None and is_3d_data:
+        #      if pred_vort_mag_np.shape[0] == points_np.shape[0]:
+        #         fields_to_plot_on_slice["Pred Vorticity Mag"] = pred_vort_mag_np[slice_indices]
+        #      else:
+        #         print(f"Warning: Vorticity array shape mismatch for sample {current_sample_global_idx} from {path_t1.name}. Skipping vorticity plot.")
 
     num_subplots = len(fields_to_plot_on_slice)
     if num_subplots == 0:
@@ -350,7 +349,7 @@ def validate_on_pairs(
     metrics_list = { # Standard metrics
         "mse": [], "rmse_mag": [], "mse_div": [],
         "mse_x": [], "mse_y": [], "mse_z": [],
-        "mse_vorticity_mag": [],
+        # "mse_vorticity_mag": [], # Removed
         "cosine_sim": [],
         "max_true_vel_mag": [],
         "max_pred_vel_mag": []
@@ -360,7 +359,6 @@ def validate_on_pairs(
     # Data for W&B Table: list of lists/tuples: [case, probe_id, target_x, target_y, target_z, error_mag]
     wandb_table_probe_errors_data = []
     case_probe_definitions = {} # Stores {case_name: [(target_coord_str, node_idx, target_coord_xyz), ...]}
-
 
     from .data_utils import vtk_to_knn_graph, vtk_to_fullmesh_graph # Local import
     from .metrics import cosine_similarity_metric # Import cosine similarity
@@ -497,16 +495,16 @@ def validate_on_pairs(
 
         points_np_frame = graph_t1.pos.cpu().numpy() # Points for current frame
 
-        if points_np_frame.shape[1] == 3: # Only if 3D data
-            true_vort_mag_np = calculate_vorticity_magnitude(points_np_frame, true_vel_t1.cpu().numpy())
-            pred_vort_mag_np = calculate_vorticity_magnitude(points_np_frame, predicted_vel_t1.cpu().numpy())
-            if true_vort_mag_np is not None and pred_vort_mag_np is not None and \
-               true_vort_mag_np.shape == pred_vort_mag_np.shape:
-                mse_vort_mag = np.mean((true_vort_mag_np - pred_vort_mag_np) ** 2)
-                metrics_list["mse_vorticity_mag"].append(mse_vort_mag)
-            else: metrics_list["mse_vorticity_mag"].append(np.nan)
-        else: metrics_list["mse_vorticity_mag"].append(np.nan)
-
+        # Vorticity calculation and metric removed
+        # if points_np_frame.shape[1] == 3: # Only if 3D data
+        #     true_vort_mag_np = calculate_vorticity_magnitude(points_np_frame, true_vel_t1.cpu().numpy())
+        #     pred_vort_mag_np = calculate_vorticity_magnitude(points_np_frame, predicted_vel_t1.cpu().numpy())
+        #     if true_vort_mag_np is not None and pred_vort_mag_np is not None and \
+        #        true_vort_mag_np.shape == pred_vort_mag_np.shape:
+        #         mse_vort_mag = np.mean((true_vort_mag_np - pred_vort_mag_np) ** 2)
+        #         metrics_list["mse_vorticity_mag"].append(mse_vort_mag)
+        #     else: metrics_list["mse_vorticity_mag"].append(np.nan)
+        # else: metrics_list["mse_vorticity_mag"].append(np.nan)
 
         # --- Probe Data Extraction and Logging ---
         if probes_enabled and current_case_name in case_probe_definitions and case_probe_definitions[current_case_name]:
@@ -567,13 +565,14 @@ def validate_on_pairs(
                     "true_velocity": true_vel_np,
                     "predicted_velocity": pred_vel_np,
                     "delta_velocity_vector": delta_v_vectors, # Add delta_v vector field
-
                     "velocity_error_magnitude": error_mag_for_vtk.cpu().numpy()
                 }
-                if points_np_frame.shape[1] == 3: # Vorticity only for 3D
-                    # true_vort_mag_np and pred_vort_mag_np already computed if 3D
-                    if true_vort_mag_np is not None: point_data_for_vtk["true_vorticity_magnitude"] = true_vort_mag_np
-                    if pred_vort_mag_np is not None: point_data_for_vtk["predicted_vorticity_magnitude"] = pred_vort_mag_np
+                # Vorticity fields removed from VTK output
+                # if points_np_frame.shape[1] == 3: # Vorticity only for 3D
+                #     # true_vort_mag_np and pred_vort_mag_np already computed if 3D
+                #     if true_vort_mag_np is not None: point_data_for_vtk["true_vorticity_magnitude"] = true_vort_mag_np
+                #     if pred_vort_mag_np is not None: point_data_for_vtk["predicted_vorticity_magnitude"] = pred_vort_mag_np
+
 
                 write_vtk_with_fields(str(vtk_file_path), points_np_frame, point_data_for_vtk)
             except Exception as e_vtk:
@@ -581,11 +580,12 @@ def validate_on_pairs(
 
         if i == log_field_image_sample_idx and points_np_frame is not None and points_np_frame.shape[0] > 0:
             error_mag_tensor_for_plot = torch.norm(predicted_vel_t1 - true_vel_t1, dim=1)
-            # pred_vort_mag_np already computed if 3D, else None
+            # Vorticity data removed from this call
             _log_and_save_field_plots(
                 points_np=points_np_frame, true_vel_tensor=true_vel_t1, pred_vel_tensor=predicted_vel_t1,
                 error_mag_tensor=error_mag_tensor_for_plot, pred_div_tensor=div_pred_tensor,
-                pred_vort_mag_np=pred_vort_mag_np if points_np_frame.shape[1] == 3 else None,
+                # pred_vort_mag_np=pred_vort_mag_np if points_np_frame.shape[1] == 3 else None, # Removed
+
                 path_t1=path_t1, epoch_num=epoch_num, current_sample_global_idx=i,
                 output_base_dir=output_base_dir, wandb_run=wandb_run, model_name=model_name
             )
@@ -608,7 +608,8 @@ def validate_on_pairs(
         "val_mse_x": avg_metrics.get("mse_x", np.nan),
         "val_mse_y": avg_metrics.get("mse_y", np.nan),
         "val_mse_z": avg_metrics.get("mse_z", np.nan),
-        "val_mse_vorticity_mag": avg_metrics.get("mse_vorticity_mag", np.nan),
+        # "val_mse_vorticity_mag": avg_metrics.get("mse_vorticity_mag", np.nan), # Removed
+
         "val_cosine_sim": avg_metrics.get("cosine_sim", np.nan),
         "val_avg_max_true_vel_mag": avg_metrics.get("max_true_vel_mag", np.nan),
         "val_avg_max_pred_vel_mag": avg_metrics.get("max_pred_vel_mag", np.nan)
