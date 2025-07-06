@@ -216,16 +216,19 @@ def histogram_jsd_validation(
                     # to include 'k_neighbors' and the correct 'use_noisy_data' setting.
                     graph_input = vtk_to_knn_graph(
                         vtk_path_ref,
-                        **graph_cfg_val, # This will pass all necessary mapped keys
-                        device=device
+                        **graph_cfg_val # This will pass all necessary mapped keys
+                        # device argument removed as graphs are created on CPU by default
                     )
                 elif graph_type_val == "full_mesh":
                     graph_input = vtk_to_fullmesh_graph(
                         vtk_path_ref, velocity_key=graph_cfg_val.get("velocity_key", "U"), # Key from input file
-                        pressure_key=graph_cfg_val.get("pressure_key", "p"), device=device
+                        pressure_key=graph_cfg_val.get("pressure_key", "p")
+                        # device argument removed
                     )
                 else: raise ValueError(f"Unknown graph type for on-the-fly JSD: {graph_type_val}")
 
+                # Graph is on CPU, move to device for model input
+                graph_input = graph_input.to(device)
                 pred_vel_on_fly = model(graph_input).cpu().numpy() # [N_graph, 3]
 
                 # Interpolate to ref_points_for_jsd if graph points differ
