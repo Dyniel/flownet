@@ -46,7 +46,7 @@ project_root = Path(__file__).resolve().parent.parent
 sys.path.append(str(project_root))
 
 from src.cfd_gnn.data_utils import PairedFrameDataset, make_frame_pairs, vtk_to_knn_graph, vtk_to_fullmesh_graph
-from src.cfd_gnn.models import FlowNet, RotFlowNet # Add other models if created
+from src.cfd_gnn.models import FlowNet, RotFlowNet, FlowNetGATv2 # Add FlowNetGATv2
 from src.cfd_gnn.training import train_single_epoch, validate_on_pairs
 from src.cfd_gnn.validation import histogram_jsd_validation # For post-training validation
 from src.cfd_gnn.utils import (
@@ -65,9 +65,9 @@ def main():
         "--run-name", type=str, default=None, help="Name for this run (used for output directories and W&B)."
     )
     parser.add_argument(
-        "--models-to-train", type=str, nargs="+", default=["FlowNet", "Gao"], # Default from original
-        choices=["FlowNet", "Gao", "RotFlowNet"], # Allow RotFlowNet as synonym for Gao
-        help="Which model architectures to train (e.g., FlowNet Gao)."
+        "--models-to-train", type=str, nargs="+", default=["FlowNet"],
+        choices=["FlowNet", "Gao", "RotFlowNet", "FlowNetGATv2"],
+        help="Which model architectures to train (e.g., FlowNet FlowNetGATv2)."
     )
     parser.add_argument(
         "--epochs", type=int, help="Override number of training epochs from config."
@@ -210,7 +210,8 @@ def main():
     models_registry = {
         "FlowNet": FlowNet,
         "Gao": RotFlowNet, # Assuming Gao is RotFlowNet
-        "RotFlowNet": RotFlowNet
+        "RotFlowNet": RotFlowNet,
+        "FlowNetGATv2": FlowNetGATv2
     }
     models_to_train_names = [name for name in args.models_to_train if name in models_registry]
     if not models_to_train_names:

@@ -119,12 +119,25 @@ class BaseFlowGNN(nn.Module):
     def forward(self, data: Data) -> torch.Tensor:
         h_node = self.node_encoder(data.x)
 
-        # Process edge features. The granular checkpointing for edge_encoder internals
-        # was found to be problematic and did not prevent OOMs if the initial tensor
-        # from data.edge_attr -> hidden_dim was too large.
-        # We now always use the standard forward pass for the edge_encoder.
-        # The self.checkpoint_edge_encoder_internals flag will no longer have an effect.
-        h_edge = self.edge_encoder(data.edge_attr)
+        # Process edge features with optional granular checkpointing
+        if self.checkpoint_edge_encoder_internals:
+            # Apply checkpointing to each layer within the edge_encoder MLP
+            # self.edge_encoder is an nn.Sequential
+            temp_h_edge = data.edge_attr
+            if not temp_h_edge.requires_grad and torch.is_grad_enabled():
+                 # Ensure inputs to checkpointed segments that require grad have requires_grad=True
+                 # This is often needed if data.edge_attr is a leaf tensor from data loader.
+                 # Only set if grads are enabled for the overall computation.
+                temp_h_edge.requires_grad_(True)
+
+            for layer in self.edge_encoder:
+                # Preserve RNG state for checkpoint is important if layers have stochasticity (e.g. Dropout)
+                # and non_reentrant version is used. For Linear/ReLU, it's less critical but good practice.
+                temp_h_edge = checkpoint(layer, temp_h_edge, use_reentrant=False, preserve_rng_state=True)
+            h_edge = temp_h_edge
+        else:
+            # Original behavior or module-level checkpoint (if added back)
+            h_edge = self.edge_encoder(data.edge_attr)
 
         for conv_layer in self.convs:
             # Checkpointing GNN steps
@@ -162,6 +175,38 @@ class RotFlowNet(BaseFlowGNN):
             gnn_step_mlp_layers=cfg.get("gnn_step_mlp_layers", 2),
             checkpoint_edge_encoder_internals=cfg.get("checkpoint_edge_encoder_internals", False)
         )
+
+class FlowNetGATv2(BaseFlowGNN):
+    def __init__(self, cfg: dict):
+        # Call BaseFlowGNN's __init__ first
+        super().__init__(
+            node_in_features=cfg.get("node_in_features", 3),
+            edge_in_features=cfg.get("edge_in_features", 3),
+            node_out_features=cfg.get("node_out_features", 3),
+            hidden_dim=cfg.get("h_dim", 128),
+            num_gnn_layers=cfg.get("layers", 5), # This will determine loop in BaseFlowGNN, but we override convs
+            encoder_mlp_layers=cfg.get("encoder_mlp_layers", 2),
+            decoder_mlp_layers=cfg.get("decoder_mlp_layers", 2),
+            gnn_step_mlp_layers=cfg.get("gnn_step_mlp_layers", 2), # For BaseFlowGNN compatibility
+            checkpoint_edge_encoder_internals=cfg.get("checkpoint_edge_encoder_internals", False)
+        )
+
+        # Override self.convs with GNNStepGATv2 layers
+        self.convs = nn.ModuleList()
+        num_gnn_layers = cfg.get("layers", 5)
+        hidden_dim = cfg.get("h_dim", 128)
+        # Get GATv2 specific parameters from config, with defaults
+        num_attention_heads = cfg.get("gat_num_heads", 4)
+        gnn_dropout_rate = cfg.get("gnn_dropout_rate", 0.0)
+        # activation_fn can also be made configurable if needed, e.g. from cfg.get("activation_fn_name")
+
+        for _ in range(num_gnn_layers):
+            self.convs.append(GNNStepGATv2(
+                hidden_dim=hidden_dim,
+                num_heads=num_attention_heads,
+                dropout_rate=gnn_dropout_rate
+                # activation=activation_fn # If made configurable
+            ))
 
 if __name__ == '__main__':
     print("Testing models.py...")
