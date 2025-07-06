@@ -186,6 +186,7 @@ def _log_and_save_field_plots(
                 wandb_run.log({image_log_key: wandb.Image(pil_image)}, step=epoch_num, commit=False)
                 buf.close()
                 pil_image.close()
+
             except Exception as e_wandb_log:
                 print(f"Warning: Could not log W&B field image for sample {current_sample_global_idx} from {path_t1.name} (epoch {epoch_num}): {e_wandb_log}")
 
@@ -566,6 +567,7 @@ def validate_on_pairs(
                     "true_velocity": true_vel_np,
                     "predicted_velocity": pred_vel_np,
                     "delta_velocity_vector": delta_v_vectors, # Add delta_v vector field
+
                     "velocity_error_magnitude": error_mag_for_vtk.cpu().numpy()
                 }
                 if points_np_frame.shape[1] == 3: # Vorticity only for 3D
@@ -613,6 +615,7 @@ def validate_on_pairs(
     }
     # wandb_probe_metrics_for_epoch is no longer returned for direct logging of individual metrics
     return return_metrics, probe_data_collected
+
 
 
 if __name__ == '__main__':
