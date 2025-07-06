@@ -233,7 +233,6 @@ def calculate_vorticity_magnitude(points_np: np.ndarray, velocity_np: np.ndarray
         # It works on PolyData (point clouds) as well.
         # We request vorticity by ensuring 'velocity' is the active vector field.
         print(f"DEBUG_VORT: Input points_np shape: {points_np.shape}, velocity_np shape: {velocity_np.shape}")
-
         pv_grid.active_vectors_name = 'velocity' # Ensure active vectors are explicitly set before the call
         derivative_dataset = pv_grid.compute_derivative(progress_bar=False)
 
@@ -408,6 +407,61 @@ if __name__ == '__main__':
     print("Vorticity tests complete (or skipped).")
 
     print("\nmetrics.py tests complete.")
+
+
+def calculate_perc_points_within_rel_error(
+    true_vel_np: np.ndarray,
+    pred_vel_np: np.ndarray,
+    rel_tolerance: float = 0.1,
+    epsilon: float = 1e-9 # To avoid division by zero if true_vel component is zero
+) -> tuple[float, np.ndarray]:
+    """
+    Calculates the percentage of points where all velocity components (x, y, z)
+    are within a specified relative error tolerance.
+    Relative error = |true - pred| / (|true| + epsilon)
+
+    Args:
+        true_vel_np: NumPy array of true velocity vectors, shape [num_points, 3].
+        pred_vel_np: NumPy array of predicted velocity vectors, shape [num_points, 3].
+        rel_tolerance: The relative error tolerance (e.g., 0.1 for 10%).
+        epsilon: Small value to prevent division by zero.
+
+    Returns:
+        A tuple containing:
+            - percentage_compliant_points: Float, percentage of points meeting the criteria (0.0 to 100.0).
+            - point_wise_compliance: NumPy boolean array of shape [num_points],
+                                     True if the point meets the criteria, False otherwise.
+    """
+    if true_vel_np.shape != pred_vel_np.shape:
+        raise ValueError("True and predicted velocity arrays must have the same shape.")
+    if true_vel_np.ndim != 2 or true_vel_np.shape[1] != 3:
+        # Allow for 2D velocity vectors as well, by checking if last dim is 2 or 3
+        if not (true_vel_np.ndim == 2 and true_vel_np.shape[1] in [2,3]):
+             raise ValueError(f"Velocity arrays must be of shape [num_points, 2 or 3], got {true_vel_np.shape}")
+
+    num_points = true_vel_np.shape[0]
+    if num_points == 0:
+        return 0.0, np.array([], dtype=bool)
+
+    # Calculate relative error for each component
+    # rel_error_vx = |true_vx - pred_vx| / (|true_vx| + eps)
+    # rel_error_vy = |true_vy - pred_vy| / (|true_vy| + eps)
+    # rel_error_vz = |true_vz - pred_vz| / (|true_vz| + eps)
+    abs_true_vel = np.abs(true_vel_np)
+    abs_error = np.abs(true_vel_np - pred_vel_np)
+
+    relative_errors = abs_error / (abs_true_vel + epsilon)
+
+    # Check compliance for each component
+    component_wise_compliance = relative_errors <= rel_tolerance # Shape [num_points, num_components]
+
+    # A point is compliant if ALL its components are compliant
+    point_wise_compliance = np.all(component_wise_compliance, axis=1) # Shape [num_points]
+
+    num_compliant_points = np.sum(point_wise_compliance)
+    percentage_compliant_points = (num_compliant_points / num_points) * 100.0 if num_points > 0 else 0.0
+
+    return float(percentage_compliant_points), point_wise_compliance
 
 
 # --- Slice Analysis ---
