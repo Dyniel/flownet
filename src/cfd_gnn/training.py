@@ -33,21 +33,20 @@ def _log_and_save_field_plots(
     true_vel_tensor: torch.Tensor,
     pred_vel_tensor: torch.Tensor,
     error_mag_tensor: torch.Tensor,
-    pred_div_tensor: torch.Tensor,
-    # pred_vort_mag_np: np.ndarray | None, # Removed vorticity from plots for now
+    pred_div_tensor: torch.Tensor, # This is the divergence tensor
+    point_compliance_np: np.ndarray | None, # New: per-point boolean compliance data
     path_t1: Path, # For naming output files
     epoch_num: int,
     current_sample_global_idx: int, # Index of the sample in the validation dataloader
     output_base_dir: str | Path | None,
     wandb_run: wandb.sdk.wandb_run.Run | None,
     model_name: str,
-    # base_filename_stem: str, # path_t1.stem can be used directly
-    simple_plot: bool = False # Flag for the fallback simpler plot
+    simple_plot: bool = False
 ):
     """
     Generates, saves, and logs detailed field comparison plots for a validation sample.
     Plots include velocity magnitudes (true, pred, error), predicted divergence,
-    and predicted vorticity magnitude.
+    and a map of points meeting the 10% relative error criteria.
     """
     if not (wandb_run or output_base_dir): # No place to log or save
         return
@@ -58,8 +57,8 @@ def _log_and_save_field_plots(
     # Convert tensors to numpy for plotting
     true_vel_mag_np = true_vel_tensor.norm(dim=1).cpu().numpy()
     pred_vel_mag_np = pred_vel_tensor.norm(dim=1).cpu().numpy()
-    error_mag_np = error_mag_tensor.cpu().numpy()
-    pred_div_np = pred_div_tensor.cpu().numpy() if pred_div_tensor is not None else None # Handle optional div
+    error_mag_np = error_mag_tensor.cpu().numpy() # This is ||true - pred||
+    pred_div_np = pred_div_tensor.cpu().numpy() if pred_div_tensor is not None else None
 
     # Determine slice for 2D plotting (e.g., points near z=mean(z) or just XY if 2D)
     slice_points_2d = None
@@ -94,12 +93,12 @@ def _log_and_save_field_plots(
     if not simple_plot:
         if pred_div_np is not None:
             fields_to_plot_on_slice["Pred Divergence"] = pred_div_np[slice_indices]
-        # Vorticity plotting removed
-        # if pred_vort_mag_np is not None and is_3d_data:
-        #      if pred_vort_mag_np.shape[0] == points_np.shape[0]:
-        #         fields_to_plot_on_slice["Pred Vorticity Mag"] = pred_vort_mag_np[slice_indices]
-        #      else:
-        #         print(f"Warning: Vorticity array shape mismatch for sample {current_sample_global_idx} from {path_t1.name}. Skipping vorticity plot.")
+        if point_compliance_np is not None:
+            # Ensure point_compliance_np matches the full number of points before slicing
+            if point_compliance_np.shape[0] == points_np.shape[0]:
+                 fields_to_plot_on_slice["Points within 10% RelErr"] = point_compliance_np[slice_indices].astype(float) # Convert bool to float for plotting
+            else:
+                print(f"Warning: point_compliance_np shape mismatch ({point_compliance_np.shape[0]}) vs points_np ({points_np.shape[0]}) for sample {current_sample_global_idx}. Skipping compliance plot.")
 
     num_subplots = len(fields_to_plot_on_slice)
     if num_subplots == 0:
@@ -130,12 +129,19 @@ def _log_and_save_field_plots(
         for ax_idx, (title, data_field) in enumerate(fields_to_plot_on_slice.items()):
             ax = axes[ax_idx]
             cmap = "jet"
-            if "Error" in title: cmap = "Reds"
+            if "Error Mag" == title: cmap = "Reds" # Specific for magnitude of error vector
             elif "Divergence" in title: cmap = "coolwarm"
-            elif "Vorticity" in title: cmap = "viridis"
+            elif "Points within 10% RelErr" in title: cmap = "RdYlGn" # Green for good, Red for bad
 
-            contour = ax.tricontourf(slice_points_2d[:,0], slice_points_2d[:,1], tri.simplices, data_field, levels=14, cmap=cmap)
-            fig.colorbar(contour, ax=ax)
+            # For the compliance plot, we might want discrete levels (0 and 1)
+            if "Points within 10% RelErr" in title:
+                contour = ax.tricontourf(slice_points_2d[:,0], slice_points_2d[:,1], tri.simplices, data_field, levels=[ -0.5, 0.5, 1.5], cmap=cmap)
+                # Add a colorbar with ticks at 0 and 1
+                cbar = fig.colorbar(contour, ax=ax, ticks=[0, 1])
+                cbar.ax.set_yticklabels(['Fail', 'Pass']) # Label ticks
+            else:
+                contour = ax.tricontourf(slice_points_2d[:,0], slice_points_2d[:,1], tri.simplices, data_field, levels=14, cmap=cmap)
+                fig.colorbar(contour, ax=ax)
             ax.set_title(title)
             ax.set_xlabel("X")
             ax.set_ylabel("Y")
@@ -185,7 +191,6 @@ def _log_and_save_field_plots(
                 wandb_run.log({image_log_key: wandb.Image(pil_image)}, step=epoch_num, commit=False)
                 buf.close()
                 pil_image.close()
-
             except Exception as e_wandb_log:
                 print(f"Warning: Could not log W&B field image for sample {current_sample_global_idx} from {path_t1.name} (epoch {epoch_num}): {e_wandb_log}")
 
@@ -352,7 +357,8 @@ def validate_on_pairs(
         # "mse_vorticity_mag": [], # Removed
         "cosine_sim": [],
         "max_true_vel_mag": [],
-        "max_pred_vel_mag": []
+        "max_pred_vel_mag": [],
+        "perc_points_within_10_rel_err": [] # New metric
     }
     # --- Probe Data Initialization ---
     probe_data_collected = [] # List to store dicts for CSV/Pandas for the detailed CSV file
@@ -360,8 +366,9 @@ def validate_on_pairs(
     wandb_table_probe_errors_data = []
     case_probe_definitions = {} # Stores {case_name: [(target_coord_str, node_idx, target_coord_xyz), ...]}
 
+
     from .data_utils import vtk_to_knn_graph, vtk_to_fullmesh_graph # Local import
-    from .metrics import cosine_similarity_metric # Import cosine similarity
+    from .metrics import cosine_similarity_metric, calculate_perc_points_within_rel_error # Import new metric
     from sklearn.neighbors import NearestNeighbors # For probe point finding
 
     # Extract relevant configs from global_cfg
@@ -493,6 +500,15 @@ def validate_on_pairs(
         metrics_list["max_true_vel_mag"].append(max_true_vel_mag)
         metrics_list["max_pred_vel_mag"].append(max_pred_vel_mag)
 
+        # Calculate new relative error compliance metric
+        true_vel_np_for_metric = true_vel_t1.cpu().numpy()
+        pred_vel_np_for_metric = predicted_vel_t1.cpu().numpy()
+        perc_compliant, point_compliance_data = calculate_perc_points_within_rel_error(
+            true_vel_np_for_metric, pred_vel_np_for_metric, rel_tolerance=0.1
+        )
+        metrics_list["perc_points_within_10_rel_err"].append(perc_compliant)
+
+
         points_np_frame = graph_t1.pos.cpu().numpy() # Points for current frame
 
         # Vorticity calculation and metric removed
@@ -505,6 +521,7 @@ def validate_on_pairs(
         #         metrics_list["mse_vorticity_mag"].append(mse_vort_mag)
         #     else: metrics_list["mse_vorticity_mag"].append(np.nan)
         # else: metrics_list["mse_vorticity_mag"].append(np.nan)
+
 
         # --- Probe Data Extraction and Logging ---
         if probes_enabled and current_case_name in case_probe_definitions and case_probe_definitions[current_case_name]:
@@ -573,7 +590,6 @@ def validate_on_pairs(
                 #     if true_vort_mag_np is not None: point_data_for_vtk["true_vorticity_magnitude"] = true_vort_mag_np
                 #     if pred_vort_mag_np is not None: point_data_for_vtk["predicted_vorticity_magnitude"] = pred_vort_mag_np
 
-
                 write_vtk_with_fields(str(vtk_file_path), points_np_frame, point_data_for_vtk)
             except Exception as e_vtk:
                 print(f"Warning: Could not save detailed VTK fields for {path_t1.name}: {e_vtk}")
@@ -583,9 +599,9 @@ def validate_on_pairs(
             # Vorticity data removed from this call
             _log_and_save_field_plots(
                 points_np=points_np_frame, true_vel_tensor=true_vel_t1, pred_vel_tensor=predicted_vel_t1,
-                error_mag_tensor=error_mag_tensor_for_plot, pred_div_tensor=div_pred_tensor,
-                # pred_vort_mag_np=pred_vort_mag_np if points_np_frame.shape[1] == 3 else None, # Removed
-
+                error_mag_tensor=error_mag_tensor_for_plot, pred_div_tensor=div_pred_tensor, # Pass div_pred_tensor
+                # pred_vort_mag_np=None, # Vorticity removed
+                point_compliance_np=point_compliance_data, # Pass new compliance data
                 path_t1=path_t1, epoch_num=epoch_num, current_sample_global_idx=i,
                 output_base_dir=output_base_dir, wandb_run=wandb_run, model_name=model_name
             )
@@ -609,14 +625,13 @@ def validate_on_pairs(
         "val_mse_y": avg_metrics.get("mse_y", np.nan),
         "val_mse_z": avg_metrics.get("mse_z", np.nan),
         # "val_mse_vorticity_mag": avg_metrics.get("mse_vorticity_mag", np.nan), # Removed
-
+        "val_perc_points_within_10_rel_err": avg_metrics.get("perc_points_within_10_rel_err", np.nan), # Add new metric
         "val_cosine_sim": avg_metrics.get("cosine_sim", np.nan),
         "val_avg_max_true_vel_mag": avg_metrics.get("max_true_vel_mag", np.nan),
         "val_avg_max_pred_vel_mag": avg_metrics.get("max_pred_vel_mag", np.nan)
     }
     # wandb_probe_metrics_for_epoch is no longer returned for direct logging of individual metrics
     return return_metrics, probe_data_collected
-
 
 
 if __name__ == '__main__':

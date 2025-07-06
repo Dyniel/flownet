@@ -35,7 +35,6 @@ import wandb
 import pandas as pd # For saving probe data
 import numpy as np # For np.nan
 
-
 import torch
 from torch.optim import Adam
 from torch.optim.lr_scheduler import ReduceLROnPlateau
@@ -199,6 +198,7 @@ def main():
         "train_loss_total", "train_loss_sup", "train_loss_div", "train_loss_hist", "train_loss_reg",
         "val_mse", "val_rmse_mag", "val_mse_div", "val_cosine_sim",
         "val_mse_x", "val_mse_y", "val_mse_z",
+        "val_perc_points_within_10_rel_err", # Added new metric
         # "val_mse_vorticity_mag", # Removed
         "val_avg_max_true_vel_mag", "val_avg_max_pred_vel_mag",
         "lr", "sample_rel_tke_err", "sample_cosine_sim"
@@ -294,7 +294,6 @@ def main():
                 # It now returns (val_metrics, epoch_probe_data_for_csv)
                 # W&B Table logging for probes is handled inside validate_on_pairs
                 val_metrics, epoch_probe_data_for_csv = validate_on_pairs(
-
                     model=model,
                     val_frame_pairs=val_pairs_during_train,
                     global_cfg=cfg, # Pass the main config dict
@@ -304,7 +303,6 @@ def main():
                     output_base_dir=run_output_dir,
                     save_fields_vtk=save_fields_vtk_flag,
                     wandb_run=wandb_run,
-
                     log_field_image_sample_idx=log_field_image_idx,
                     model_name=model_name
                 )
@@ -394,6 +392,7 @@ def main():
                 val_metrics.get("val_mse", np.nan), val_metrics.get("val_rmse_mag", np.nan),
                 val_metrics.get("val_mse_div", np.nan), val_metrics.get("val_cosine_sim", np.nan),
                 val_metrics.get("val_mse_x", np.nan), val_metrics.get("val_mse_y", np.nan), val_metrics.get("val_mse_z", np.nan),
+                val_metrics.get("val_perc_points_within_10_rel_err", np.nan), # Added new metric
                 # val_metrics.get("val_mse_vorticity_mag", np.nan), # Removed
                 val_metrics.get("val_avg_max_true_vel_mag", np.nan),
                 val_metrics.get("val_avg_max_pred_vel_mag", np.nan),
