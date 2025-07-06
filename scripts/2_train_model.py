@@ -35,6 +35,7 @@ import wandb
 import pandas as pd # For saving probe data
 import numpy as np # For np.nan
 
+
 import torch
 from torch.optim import Adam
 from torch.optim.lr_scheduler import ReduceLROnPlateau
@@ -293,6 +294,7 @@ def main():
                 # It now returns (val_metrics, epoch_probe_data_for_csv)
                 # W&B Table logging for probes is handled inside validate_on_pairs
                 val_metrics, epoch_probe_data_for_csv = validate_on_pairs(
+
                     model=model,
                     val_frame_pairs=val_pairs_during_train,
                     global_cfg=cfg, # Pass the main config dict
@@ -302,6 +304,7 @@ def main():
                     output_base_dir=run_output_dir,
                     save_fields_vtk=save_fields_vtk_flag,
                     wandb_run=wandb_run,
+
                     log_field_image_sample_idx=log_field_image_idx,
                     model_name=model_name
                 )

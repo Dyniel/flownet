@@ -185,6 +185,7 @@ def _log_and_save_field_plots(
                 wandb_run.log({image_log_key: wandb.Image(pil_image)}, step=epoch_num, commit=False)
                 buf.close()
                 pil_image.close()
+
             except Exception as e_wandb_log:
                 print(f"Warning: Could not log W&B field image for sample {current_sample_global_idx} from {path_t1.name} (epoch {epoch_num}): {e_wandb_log}")
 
@@ -359,7 +360,6 @@ def validate_on_pairs(
     wandb_table_probe_errors_data = []
     case_probe_definitions = {} # Stores {case_name: [(target_coord_str, node_idx, target_coord_xyz), ...]}
 
-
     from .data_utils import vtk_to_knn_graph, vtk_to_fullmesh_graph # Local import
     from .metrics import cosine_similarity_metric # Import cosine similarity
     from sklearn.neighbors import NearestNeighbors # For probe point finding
@@ -506,7 +506,6 @@ def validate_on_pairs(
         #     else: metrics_list["mse_vorticity_mag"].append(np.nan)
         # else: metrics_list["mse_vorticity_mag"].append(np.nan)
 
-
         # --- Probe Data Extraction and Logging ---
         if probes_enabled and current_case_name in case_probe_definitions and case_probe_definitions[current_case_name]:
             frame_time_val = graph_t0.time.item() if hasattr(graph_t0, 'time') and graph_t0.time is not None else float(i)
@@ -574,6 +573,7 @@ def validate_on_pairs(
                 #     if true_vort_mag_np is not None: point_data_for_vtk["true_vorticity_magnitude"] = true_vort_mag_np
                 #     if pred_vort_mag_np is not None: point_data_for_vtk["predicted_vorticity_magnitude"] = pred_vort_mag_np
 
+
                 write_vtk_with_fields(str(vtk_file_path), points_np_frame, point_data_for_vtk)
             except Exception as e_vtk:
                 print(f"Warning: Could not save detailed VTK fields for {path_t1.name}: {e_vtk}")
@@ -585,6 +585,7 @@ def validate_on_pairs(
                 points_np=points_np_frame, true_vel_tensor=true_vel_t1, pred_vel_tensor=predicted_vel_t1,
                 error_mag_tensor=error_mag_tensor_for_plot, pred_div_tensor=div_pred_tensor,
                 # pred_vort_mag_np=pred_vort_mag_np if points_np_frame.shape[1] == 3 else None, # Removed
+
                 path_t1=path_t1, epoch_num=epoch_num, current_sample_global_idx=i,
                 output_base_dir=output_base_dir, wandb_run=wandb_run, model_name=model_name
             )
@@ -608,12 +609,14 @@ def validate_on_pairs(
         "val_mse_y": avg_metrics.get("mse_y", np.nan),
         "val_mse_z": avg_metrics.get("mse_z", np.nan),
         # "val_mse_vorticity_mag": avg_metrics.get("mse_vorticity_mag", np.nan), # Removed
+
         "val_cosine_sim": avg_metrics.get("cosine_sim", np.nan),
         "val_avg_max_true_vel_mag": avg_metrics.get("max_true_vel_mag", np.nan),
         "val_avg_max_pred_vel_mag": avg_metrics.get("max_pred_vel_mag", np.nan)
     }
     # wandb_probe_metrics_for_epoch is no longer returned for direct logging of individual metrics
     return return_metrics, probe_data_collected
+
 
 
 if __name__ == '__main__':
