@@ -1,0 +1,76 @@
+method: bayes
+metric:
+  name: FlowNet/val_nrmse_vel # Assuming FlowNet is the primary model, adjust if others are default
+  goal: minimize
+parameters:
+  lr:
+    distribution: log_uniform_values
+    min: 0.00001
+    max: 0.001
+  h_dim:
+    values: [64, 128, 256]
+  layers:
+    values: [3, 4, 5, 6]
+  loss_supervised_weight:
+    distribution: uniform
+    min: 0.5
+    max: 1.0
+  loss_divergence_weight:
+    distribution: uniform
+    min: 0.0
+    max: 0.5
+  loss_histogram_weight:
+    distribution: uniform
+    min: 0.0
+    max: 0.2
+  batch_size:
+    values: [2, 4] # Small batch sizes as per existing configs
+  regularization_type:
+    values: ["None", "L1", "L2"]
+  regularization_lambda:
+    distribution: log_uniform_values
+    min: 0.000001
+    max: 0.01
+  encoder_mlp_layers:
+    values: [1, 2, 3]
+  decoder_mlp_layers:
+    values: [1, 2, 3]
+  gnn_step_mlp_layers:
+    values: [1, 2, 3]
+  # Fixed parameters for all sweep runs can be part of the command
+  # epochs:
+  #   value: 75 # Example: fix epochs for all runs in the sweep
+
+program: scripts/2_train_model.py
+
+command:
+  - ${env}
+  - ${interpreter}
+  - ${program}
+  - "--config"
+  - "config/default_config.yaml" # Base configuration
+  - "--models-to-train"
+  - "FlowNet" # Focus sweep on FlowNet, can be changed
+  - "--epochs"
+  - "50" # Fixed epochs for sweep runs, adjust as needed
+  - ${args} # Sweep agent adds --param=value here
+early_terminate: # Optional: configure early stopping for the sweep itself
+  type: hyperband
+  min_iter: 5 # Minimum number of iterations (epochs in this case, but W&B sweep means runs)
+  # s: 2 # Default, number of brackets
+  # eta: 3 # Default, reduction factor
+# Note: The metric name in W&B logs includes the model name, e.g., "FlowNet/val_nrmse_vel".
+# Make sure the metric name here matches exactly what's logged.
+# I used "FlowNet/val_nrmse_vel". If the model name prefix changes or is dynamic, adjust this.
+# If multiple models are trained in one run of 2_train_model.py, the sweep needs to target one model's metric.
+# The command above fixes training to "FlowNet".
+# If `val_nrmse_vel` is not logged when pressure is not available/predicted,
+# then `FlowNet/val_rmse_mag` might be a more robust choice for the sweep metric.
+# The default_config.yaml has node_out_features: 4, so pressure should be predicted.
+# PairedFrameDataset also loads pressure if "p" key exists. Dummy data in training.py tests include "p".
+# So, `val_nrmse_p` and thus `val_nrmse_vel` should be logged.
+# The `run_experiments.py` uses `test_config.yaml` as base. default_config.yaml is more comprehensive.
+# Using default_config.yaml as base for sweep.
+# Epochs set to 50 for quicker sweep runs, can be increased.Now, I'll create the launcher script `scripts/launch_sweep.py`.
+
+**Step 2.2: Create `scripts/launch_sweep.py`**
