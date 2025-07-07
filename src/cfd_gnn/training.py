@@ -31,41 +31,42 @@ import matplotlib.pyplot as plt
 from scipy.spatial import Delaunay
 import io
 import wandb
-from PIL import Image # Import PIL Image
+from PIL import Image  # Import PIL Image
+
 
 # New helper function for plotting:
 def _log_and_save_field_plots(
-    points_np: np.ndarray,
-    true_vel_tensor: torch.Tensor,
-    pred_vel_tensor: torch.Tensor,
-    error_mag_tensor: torch.Tensor,
-    pred_div_tensor: torch.Tensor, # This is the divergence tensor
-    point_compliance_np: np.ndarray | None, # New: per-point boolean compliance data
-    path_t1: Path, # For naming output files
-    epoch_num: int,
-    current_sample_global_idx: int, # Index of the sample in the validation dataloader
-    output_base_dir: str | Path | None,
-    wandb_run: wandb.sdk.wandb_run.Run | None,
-    model_name: str,
-    simple_plot: bool = False
+        points_np: np.ndarray,
+        true_vel_tensor: torch.Tensor,
+        pred_vel_tensor: torch.Tensor,
+        error_mag_tensor: torch.Tensor,
+        pred_div_tensor: torch.Tensor,  # This is the divergence tensor
+        point_compliance_np: np.ndarray | None,  # New: per-point boolean compliance data
+        path_t1: Path,  # For naming output files
+        epoch_num: int,
+        current_sample_global_idx: int,  # Index of the sample in the validation dataloader
+        output_base_dir: str | Path | None,
+        wandb_run: wandb.sdk.wandb_run.Run | None,
+        model_name: str,
+        simple_plot: bool = False
 ):
     """
     Generates, saves, and logs detailed field comparison plots for a validation sample.
     Plots include velocity magnitudes (true, pred, error), predicted divergence,
     and a map of points meeting the 10% relative error criteria.
     """
-    if not (wandb_run or output_base_dir): # No place to log or save
+    if not (wandb_run or output_base_dir):  # No place to log or save
         return
-    if points_np is None or points_np.shape[0] < 3: # Need at least 3 points for triangulation
-        print(f"Warning: Not enough points ({points_np.shape[0] if points_np is not None else 'None'}) for sample {current_sample_global_idx} from {path_t1.name} to generate field plot.")
+    if points_np is None or points_np.shape[0] < 3:  # Need at least 3 points for triangulation
+        print(
+            f"Warning: Not enough points ({points_np.shape[0] if points_np is not None else 'None'}) for sample {current_sample_global_idx} from {path_t1.name} to generate field plot.")
         return
 
     # Convert tensors to numpy for plotting
     true_vel_mag_np = true_vel_tensor.norm(dim=1).cpu().numpy()
     pred_vel_mag_np = pred_vel_tensor.norm(dim=1).cpu().numpy()
-    error_mag_np = error_mag_tensor.cpu().numpy() # This is ||true - pred||
+    error_mag_np = error_mag_tensor.cpu().numpy()  # This is ||true - pred||
     pred_div_np = pred_div_tensor.cpu().numpy() if pred_div_tensor is not None else None
-
 
     # Determine slice for 2D plotting (e.g., points near z=mean(z) or just XY if 2D)
     slice_points_2d = None
@@ -84,12 +85,13 @@ def _log_and_save_field_plots(
             slice_indices = np.arange(points_np.shape[0])
         else:
             slice_points_2d = points_np[slice_indices, :2]
-    else: # Data is already 2D
+    else:  # Data is already 2D
         slice_points_2d = points_np
         slice_indices = np.arange(points_np.shape[0])
 
     if len(slice_indices) < 3:
-        print(f"Warning: Not enough points in final slice ({len(slice_indices)} points) for sample {current_sample_global_idx} from {path_t1.name}. Skipping plot generation.")
+        print(
+            f"Warning: Not enough points in final slice ({len(slice_indices)} points) for sample {current_sample_global_idx} from {path_t1.name}. Skipping plot generation.")
         return
 
     # Populate fields for plotting
@@ -103,29 +105,28 @@ def _log_and_save_field_plots(
         if point_compliance_np is not None:
             # Ensure point_compliance_np matches the full number of points before slicing
             if point_compliance_np.shape[0] == points_np.shape[0]:
-                 fields_to_plot_on_slice["Points within 10% RelErr"] = point_compliance_np[slice_indices].astype(float) # Convert bool to float for plotting
+                fields_to_plot_on_slice["Points within 10% RelErr"] = point_compliance_np[slice_indices].astype(
+                    float)  # Convert bool to float for plotting
             else:
-                print(f"Warning: point_compliance_np shape mismatch ({point_compliance_np.shape[0]}) vs points_np ({points_np.shape[0]}) for sample {current_sample_global_idx}. Skipping compliance plot.")
-
+                print(
+                    f"Warning: point_compliance_np shape mismatch ({point_compliance_np.shape[0]}) vs points_np ({points_np.shape[0]}) for sample {current_sample_global_idx}. Skipping compliance plot.")
 
     num_subplots = len(fields_to_plot_on_slice)
     if num_subplots == 0:
         return
 
-    if simple_plot and "Error Mag" not in fields_to_plot_on_slice: # Ensure simple plot has at least error
-        if "Pred Vel Mag" in fields_to_plot_on_slice : del fields_to_plot_on_slice["Pred Vel Mag"] # make space
-        if "True Vel Mag" in fields_to_plot_on_slice : del fields_to_plot_on_slice["True Vel Mag"]
+    if simple_plot and "Error Mag" not in fields_to_plot_on_slice:  # Ensure simple plot has at least error
+        if "Pred Vel Mag" in fields_to_plot_on_slice: del fields_to_plot_on_slice["Pred Vel Mag"]  # make space
+        if "True Vel Mag" in fields_to_plot_on_slice: del fields_to_plot_on_slice["True Vel Mag"]
         num_subplots = len(fields_to_plot_on_slice)
 
-
-    if num_subplots <= 3 :
+    if num_subplots <= 3:
         fig_rows, fig_cols = 1, num_subplots
         figsize = (6 * num_subplots, 5)
     else:
         fig_cols = 3
-        fig_rows = (num_subplots + fig_cols -1) // fig_cols
-        figsize = (18, 5 * fig_rows) if fig_rows > 0 else (18,5)
-
+        fig_rows = (num_subplots + fig_cols - 1) // fig_cols
+        figsize = (18, 5 * fig_rows) if fig_rows > 0 else (18, 5)
 
     fig, axes = plt.subplots(fig_rows, fig_cols, figsize=figsize, squeeze=False)
     axes = axes.flatten()
@@ -137,18 +138,23 @@ def _log_and_save_field_plots(
         for ax_idx, (title, data_field) in enumerate(fields_to_plot_on_slice.items()):
             ax = axes[ax_idx]
             cmap = "jet"
-            if "Error Mag" == title: cmap = "Reds" # Specific for magnitude of error vector
-            elif "Divergence" in title: cmap = "coolwarm"
-            elif "Points within 10% RelErr" in title: cmap = "RdYlGn" # Green for good, Red for bad
+            if "Error Mag" == title:
+                cmap = "Reds"  # Specific for magnitude of error vector
+            elif "Divergence" in title:
+                cmap = "coolwarm"
+            elif "Points within 10% RelErr" in title:
+                cmap = "RdYlGn"  # Green for good, Red for bad
 
             # For the compliance plot, we might want discrete levels (0 and 1)
             if "Points within 10% RelErr" in title:
-                contour = ax.tricontourf(slice_points_2d[:,0], slice_points_2d[:,1], tri.simplices, data_field, levels=[ -0.5, 0.5, 1.5], cmap=cmap)
+                contour = ax.tricontourf(slice_points_2d[:, 0], slice_points_2d[:, 1], tri.simplices, data_field,
+                                         levels=[-0.5, 0.5, 1.5], cmap=cmap)
                 # Add a colorbar with ticks at 0 and 1
                 cbar = fig.colorbar(contour, ax=ax, ticks=[0, 1])
-                cbar.ax.set_yticklabels(['Fail', 'Pass']) # Label ticks
+                cbar.ax.set_yticklabels(['Fail', 'Pass'])  # Label ticks
             else:
-                contour = ax.tricontourf(slice_points_2d[:,0], slice_points_2d[:,1], tri.simplices, data_field, levels=14, cmap=cmap)
+                contour = ax.tricontourf(slice_points_2d[:, 0], slice_points_2d[:, 1], tri.simplices, data_field,
+                                         levels=14, cmap=cmap)
                 fig.colorbar(contour, ax=ax)
             ax.set_title(title)
             ax.set_xlabel("X")
@@ -158,13 +164,16 @@ def _log_and_save_field_plots(
         for ax_idx in range(num_subplots, len(axes)):
             axes[ax_idx].set_visible(False)
 
-        plot_title_prefix = f"Epoch {epoch_num}" if epoch_num >=0 else "FinalVal"
-        fig.suptitle(f"{model_name} - {plot_title_prefix} - Sample {current_sample_global_idx} ({path_t1.stem}) - {'Z-slice' if is_3d_data else '2D'} Fields", fontsize=16)
+        plot_title_prefix = f"Epoch {epoch_num}" if epoch_num >= 0 else "FinalVal"
+        fig.suptitle(
+            f"{model_name} - {plot_title_prefix} - Sample {current_sample_global_idx} ({path_t1.stem}) - {'Z-slice' if is_3d_data else '2D'} Fields",
+            fontsize=16)
         fig.tight_layout(rect=[0, 0, 1, 0.96])
         plot_successful = True
 
     except Exception as e_plot:
-        print(f"Warning: Failed to generate tricontourf plot for sample {current_sample_global_idx} from {path_t1.name}: {e_plot}")
+        print(
+            f"Warning: Failed to generate tricontourf plot for sample {current_sample_global_idx} from {path_t1.name}: {e_plot}")
         if fig is not None: plt.close(fig)
         return
 
@@ -174,7 +183,8 @@ def _log_and_save_field_plots(
                 case_name = path_t1.parent.parent.name
                 epoch_folder_name = f"epoch_{epoch_num}" if epoch_num >= 0 else "final_validation_plots"
 
-                plot_output_dir = Path(output_base_dir) / "validation_plots" / model_name / epoch_folder_name / case_name
+                plot_output_dir = Path(
+                    output_base_dir) / "validation_plots" / model_name / epoch_folder_name / case_name
                 plot_output_dir.mkdir(parents=True, exist_ok=True)
 
                 base_filename = path_t1.stem
@@ -184,7 +194,8 @@ def _log_and_save_field_plots(
                 plt.savefig(plot_file_path)
                 # print(f"  Saved field plot to {plot_file_path}") # Reduced verbosity
             except Exception as e_save:
-                print(f"Warning: Could not save local field plot for sample {current_sample_global_idx} from {path_t1.name}: {e_save}")
+                print(
+                    f"Warning: Could not save local field plot for sample {current_sample_global_idx} from {path_t1.name}: {e_save}")
 
         if wandb_run:
             try:
@@ -200,7 +211,8 @@ def _log_and_save_field_plots(
                 buf.close()
                 pil_image.close()
             except Exception as e_wandb_log:
-                print(f"Warning: Could not log W&B field image for sample {current_sample_global_idx} from {path_t1.name} (epoch {epoch_num}): {e_wandb_log}")
+                print(
+                    f"Warning: Could not log W&B field image for sample {current_sample_global_idx} from {path_t1.name} (epoch {epoch_num}): {e_wandb_log}")
 
         plt.close(fig)
 
@@ -211,6 +223,7 @@ def train_single_epoch(
         optimizer: Optimizer,
         loss_weights: dict,
         reynolds_number: float | None, # Added Reynolds number
+
         histogram_bins: int,
         device: torch.device,
         clip_grad_norm_value: float | None = 1.0,
@@ -220,6 +233,7 @@ def train_single_epoch(
         # These would typically come from graph_t1 or be globally configured per dataset
         # For now, assuming they might be part of graph_t1 or passed if train_loader yields them
         dynamic_balancing_cfg: dict | None = None # Config for dynamic loss balancing
+
 ) -> dict:
     """
     Trains the model for a single epoch.
@@ -255,6 +269,7 @@ def train_single_epoch(
         current_beta = dynamic_balancing_cfg.get("initial_beta", 1.0)
         epsilon_grad_norm = dynamic_balancing_cfg.get("epsilon_grad_norm", 1e-9)
         print(f"DEBUG: Dynamic Loss Balancing ENABLED. Initial alpha={current_alpha}, beta={current_beta}, lambda={lambda_smooth}")
+
     else:
         print("DEBUG: Dynamic Loss Balancing DISABLED.")
 
@@ -277,11 +292,13 @@ def train_single_epoch(
             # We need them unreduced (per node) if we want to apply custom reduction later,
             # but for grad norm calculation, scalar loss value is fine.
             _, loss_pde_mom, loss_pde_cont = navier_stokes_loss( # Removed losses. prefix
+
                 model_output_t1, graph_t0, graph_t1, reynolds_number if reynolds_number is not None else 1.0,
                 reduction='mean'
             )
         # L_PDE is the sum of momentum and continuity residuals (squared and meaned)
         L_PDE = loss_pde_mom + loss_pde_cont # These are already mean squared residuals
+
 
         # Boundary condition loss (L_bc)
         loss_lbc = torch.tensor(0.0, device=device)
@@ -292,6 +309,7 @@ def train_single_epoch(
 
         # --- Dynamic Loss Balancing (if enabled) ---
         current_loss_weights = loss_weights.copy() # Start with base weights from config
+
         if dlb_enabled:
             model_params = list(model.parameters())
 
@@ -316,6 +334,7 @@ def train_single_epoch(
             beta_hat = torch.tensor(1.0, device=device) # Default beta_hat if LBC is not active for balancing
             if grad_norm_L_bc > epsilon_grad_norm : # Avoid division by zero if LBC grad is tiny/zero
                  beta_hat = grad_norm_L_PDE / (grad_norm_L_bc + epsilon_grad_norm)
+
 
             current_alpha = (1 - lambda_smooth) * current_alpha + lambda_smooth * alpha_hat.item()
             current_beta = (1 - lambda_smooth) * current_beta + lambda_smooth * beta_hat.item()
@@ -354,6 +373,7 @@ def train_single_epoch(
                 # Histogram loss needs divergence values; calculate them once if not already from L_PDE
                 div_for_hist = calculate_divergence(model_output_t1[:,:3], graph_t1) # Removed losses. prefix
                 loss_hist_val = wasserstein1_histogram_loss(div_for_hist, histogram_bins) # Removed losses. prefix
+
                 total_loss += current_loss_weights["histogram"] * loss_hist_val
 
             # Store individual (unweighted) losses for aggregation
@@ -367,12 +387,14 @@ def train_single_epoch(
                 "histogram": loss_hist_val, "alpha_dlb": current_alpha, "beta_dlb": current_beta
             }
         else: # Fixed weights
+
             total_loss, individual_losses = combined_loss(
                 model_output_t1=model_output_t1,
                 true_velocity_t1=true_vel_t1,
                 graph_t0=graph_t0,
                 graph_t1=graph_t1,
                 loss_weights=current_loss_weights, # Fixed weights from config
+
                 reynolds_number=reynolds_number,
                 histogram_bins=histogram_bins,
                 boundary_nodes_mask=boundary_mask_t1
@@ -394,7 +416,10 @@ def train_single_epoch(
         individual_losses["regularization"] = loss_reg # Store unweighted regularization loss
 
 
+        individual_losses["regularization"] = loss_reg  # Store unweighted regularization loss
+
         total_loss.backward() # Calculate gradients for the final weighted total_loss
+
 
         if clip_grad_norm_value:
             torch.nn.utils.clip_grad_norm_(model.parameters(), clip_grad_norm_value)
@@ -410,6 +435,7 @@ def train_single_epoch(
         epoch_losses_aggregated["histogram"] += individual_losses.get("histogram", torch.tensor(0.0)).item()
         epoch_losses_aggregated["regularization"] += (regularization_lambda * loss_reg).item() # Log weighted reg loss contribution
 
+
         # DEBUG: Log divergence and prediction stats for the first few batches
         # Note: model_output_t1[:,:3] is predicted_velocity_t1
         if num_batches < 2:
@@ -419,6 +445,7 @@ def train_single_epoch(
                  div_pred_debug = calculate_divergence(model_output_t1[:,:3], graph_t1) # Removed losses. prefix
             else: # From fixed-weight combined_loss
                  div_pred_debug = individual_losses.get("divergence_values_pred_for_debug")
+
 
             if div_pred_debug is not None:
                 div_pred_stats_train = {
@@ -437,6 +464,7 @@ def train_single_epoch(
             }
             print(f"DEBUG: Train batch {num_batches}, pred_vel_t1 stats: {pred_vel_stats_train}")
             if model_output_t1.shape[1] > 3: # If pressure is predicted
+
                 pred_pressure_t1_debug = model_output_t1[:, 3]
                 pred_pressure_stats_train = {
                     "min": pred_pressure_t1_debug.min().item(), "max": pred_pressure_t1_debug.max().item(),
@@ -464,7 +492,7 @@ def validate_on_pairs(
         val_frame_pairs: list[tuple[Path, Path]],  # List of (path_t0, path_t1)
         # graph_config: dict,  # For vtk_to_graph (k_neighbors, downsample_n, keys) # Replaced by global_cfg access
         # For probe points, we need the global config, not just graph_config
-        global_cfg: dict, # Main config dictionary
+        global_cfg: dict,  # Main config dictionary
         use_noisy_data_for_val: bool,  # Whether val data itself is noisy
         device: torch.device,
         # graph_type: str = "knn",  # "knn" or "full_mesh" for graph construction # Get from global_cfg
@@ -474,7 +502,7 @@ def validate_on_pairs(
         wandb_run: wandb.sdk.wandb_run.Run | None = None,  # For logging images
         log_field_image_sample_idx: int = 0,  # Index of the sample in val_frame_pairs to log as an image
         model_name: str = "Model"  # For naming W&B logs
-) -> tuple[dict, list]: # Will now also return probe_data_collected
+) -> tuple[dict, list]:  # Will now also return probe_data_collected
     """
     Validates the model on a set of paired frames from VTK files.
     Computes MSE, RMSE of velocity magnitude, and MSE of divergence.
@@ -498,7 +526,7 @@ def validate_on_pairs(
         A tuple: (dictionary_with_mean_validation_metrics, list_of_probe_data_rows)
     """
     model.eval()
-    metrics_list = { # Standard metrics
+    metrics_list = {  # Standard metrics
         "mse": [], "rmse_mag": [], "mse_div": [],
         "mse_x": [], "mse_y": [], "mse_z": [],
         # "mse_vorticity_mag": [], # Removed
@@ -508,12 +536,13 @@ def validate_on_pairs(
         "perc_points_within_10_rel_err": [], # New metric
         "nrmse_vel": [], # Added NRMSE for velocity
         "nrmse_p": []    # Added NRMSE for pressure
+
     }
     # --- Probe Data Initialization ---
-    probe_data_collected = [] # List to store dicts for CSV/Pandas for the detailed CSV file
+    probe_data_collected = []  # List to store dicts for CSV/Pandas for the detailed CSV file
     # Data for W&B Table: list of lists/tuples: [case, probe_id, target_x, target_y, target_z, error_mag]
     wandb_table_probe_errors_data = []
-    case_probe_definitions = {} # Stores {case_name: [(target_coord_str, node_idx, target_coord_xyz), ...]}
+    case_probe_definitions = {}  # Stores {case_name: [(target_coord_str, node_idx, target_coord_xyz), ...]}
 
     from .data_utils import vtk_to_knn_graph, vtk_to_fullmesh_graph # Local import
     from .metrics import (
@@ -523,6 +552,7 @@ def validate_on_pairs(
     )
     from sklearn.neighbors import NearestNeighbors # For probe point finding
 
+
     # Extract relevant configs from global_cfg
     # Use validation_during_training specific graph_config if available, else main graph_config
     # This was simplified from the original as global_cfg is now passed directly.
@@ -530,10 +560,11 @@ def validate_on_pairs(
     graph_config = val_train_cfg.get("val_graph_config", global_cfg.get("graph_config", {}))
     # Ensure essential keys are present, falling back to top-level cfg or defaults
     graph_config.update({
-        "k": graph_config.get("k", global_cfg.get("graph_config", {}).get("k", 12)), # Default k if not found anywhere
+        "k": graph_config.get("k", global_cfg.get("graph_config", {}).get("k", 12)),  # Default k if not found anywhere
         "down_n": graph_config.get("down_n", global_cfg.get("graph_config", {}).get("down_n")),
         "velocity_key": graph_config.get("velocity_key", global_cfg.get("velocity_key", "U")),
-        "noisy_velocity_key_suffix": graph_config.get("noisy_velocity_key_suffix", global_cfg.get("noisy_velocity_key_suffix", "_noisy")),
+        "noisy_velocity_key_suffix": graph_config.get("noisy_velocity_key_suffix",
+                                                      global_cfg.get("noisy_velocity_key_suffix", "_noisy")),
         "pressure_key": graph_config.get("pressure_key", global_cfg.get("pressure_key", "p"))
     })
     graph_type = val_train_cfg.get("val_graph_type", global_cfg.get("default_graph_type", "knn"))
@@ -541,12 +572,11 @@ def validate_on_pairs(
     probes_cfg = global_cfg.get("analysis_probes", {}).get("points", {})
     probes_enabled = probes_cfg.get("enabled", False)
     # Default to [1,1,1] (center point) if num_probes_per_axis not specified
-    probes_num_per_axis = probes_cfg.get("num_probes_per_axis", [1,1,1])
+    probes_num_per_axis = probes_cfg.get("num_probes_per_axis", [1, 1, 1])
     probes_output_field_name = probes_cfg.get("output_field_name", "velocity_at_probe")
 
-
     for i, (path_t0, path_t1) in enumerate(val_frame_pairs):
-        current_case_name = path_t0.parent.parent.name # e.g. sUbend_011
+        current_case_name = path_t0.parent.parent.name  # e.g. sUbend_011
 
         # --- Setup Probes for the current case if not already done ---
         if probes_enabled and current_case_name not in case_probe_definitions:
@@ -556,23 +586,24 @@ def validate_on_pairs(
             temp_graph_args_for_pos = {
                 "k_neighbors": graph_config["k"],
                 "downsample_n": graph_config.get("down_n"),
-                "velocity_key": graph_config.get("velocity_key"), # Use the determined velocity key
+                "velocity_key": graph_config.get("velocity_key"),  # Use the determined velocity key
                 "noisy_velocity_key_suffix": graph_config.get("noisy_velocity_key_suffix"),
-                "use_noisy_data": use_noisy_data_for_val # Use validation noise setting
+                "use_noisy_data": use_noisy_data_for_val  # Use validation noise setting
             }
             if graph_type == "knn":
-                 first_frame_graph_cpu = vtk_to_knn_graph(path_t0, **temp_graph_args_for_pos)
-            else: # full_mesh
-                 first_frame_graph_cpu = vtk_to_fullmesh_graph(
-                     path_t0,
-                     velocity_key=graph_config.get("velocity_key"),
-                     pressure_key=graph_config.get("pressure_key")
-                 )
+                first_frame_graph_cpu = vtk_to_knn_graph(path_t0, **temp_graph_args_for_pos)
+            else:  # full_mesh
+                first_frame_graph_cpu = vtk_to_fullmesh_graph(
+                    path_t0,
+                    velocity_key=graph_config.get("velocity_key"),
+                    pressure_key=graph_config.get("pressure_key")
+                )
 
             case_points_np = first_frame_graph_cpu.pos.cpu().numpy()
             if case_points_np.shape[0] == 0:
-                print(f"Warning: Case {current_case_name} first frame has no points. Skipping probe setup for this case.")
-                case_probe_definitions[current_case_name] = [] # Mark as processed, no probes
+                print(
+                    f"Warning: Case {current_case_name} first frame has no points. Skipping probe setup for this case.")
+                case_probe_definitions[current_case_name] = []  # Mark as processed, no probes
             else:
                 min_coords = case_points_np.min(axis=0)
                 max_coords = case_points_np.max(axis=0)
@@ -581,25 +612,29 @@ def validate_on_pairs(
                 current_case_probes_list = []
                 nx, ny, nz = probes_num_per_axis[0], probes_num_per_axis[1], probes_num_per_axis[2]
 
-                for ix_prog in range(nx): # Use different loop var name
+                for ix_prog in range(nx):  # Use different loop var name
                     # Position is at (index + 1) / (count + 1) fraction of extent
-                    px = min_coords[0] + (bbox_extents[0] * (ix_prog + 1) / (nx + 1)) if nx > 0 and bbox_extents[0] > 1e-6 else min_coords[0] + 0.5 * bbox_extents[0]
+                    px = min_coords[0] + (bbox_extents[0] * (ix_prog + 1) / (nx + 1)) if nx > 0 and bbox_extents[
+                        0] > 1e-6 else min_coords[0] + 0.5 * bbox_extents[0]
                     for iy_prog in range(ny):
-                        py = min_coords[1] + (bbox_extents[1] * (iy_prog + 1) / (ny + 1)) if ny > 0 and bbox_extents[1] > 1e-6 else min_coords[1] + 0.5 * bbox_extents[1]
+                        py = min_coords[1] + (bbox_extents[1] * (iy_prog + 1) / (ny + 1)) if ny > 0 and bbox_extents[
+                            1] > 1e-6 else min_coords[1] + 0.5 * bbox_extents[1]
                         for iz_prog in range(nz):
-                            pz = min_coords[2] + (bbox_extents[2] * (iz_prog + 1) / (nz + 1)) if nz > 0 and bbox_extents[2] > 1e-6 else min_coords[2] + 0.5 * bbox_extents[2]
+                            pz = min_coords[2] + (bbox_extents[2] * (iz_prog + 1) / (nz + 1)) if nz > 0 and \
+                                                                                                 bbox_extents[
+                                                                                                     2] > 1e-6 else \
+                            min_coords[2] + 0.5 * bbox_extents[2]
 
                             target_coord = np.array([px, py, pz])
-                            nn_probes = NearestNeighbors(n_neighbors=1).fit(case_points_np) # Renamed nn
-                            _, nearest_node_idx_arr = nn_probes.kneighbors(target_coord.reshape(1, -1)) # Renamed
+                            nn_probes = NearestNeighbors(n_neighbors=1).fit(case_points_np)  # Renamed nn
+                            _, nearest_node_idx_arr = nn_probes.kneighbors(target_coord.reshape(1, -1))  # Renamed
                             node_idx = int(nearest_node_idx_arr.squeeze())
 
                             target_coord_str = f"P_X{px:.2f}_Y{py:.2f}_Z{pz:.2f}"
                             current_case_probes_list.append((target_coord_str, node_idx, target_coord))
                 case_probe_definitions[current_case_name] = current_case_probes_list
                 print(f"DEBUG: Defined {len(current_case_probes_list)} probes for case {current_case_name}.")
-            del first_frame_graph_cpu # Free memory
-
+            del first_frame_graph_cpu  # Free memory
 
         # Graph construction (actual graphs for model input)
         if graph_type == "knn":
@@ -610,10 +645,13 @@ def validate_on_pairs(
                 "noisy_velocity_key_suffix": graph_config.get("noisy_velocity_key_suffix"),
             }
             graph_t0_cpu = vtk_to_knn_graph(path_t0, **knn_args_val, use_noisy_data=use_noisy_data_for_val)
-            graph_t1_cpu = vtk_to_knn_graph(path_t1, **knn_args_val, use_noisy_data=use_noisy_data_for_val) # Target uses same noise setting
+            graph_t1_cpu = vtk_to_knn_graph(path_t1, **knn_args_val,
+                                            use_noisy_data=use_noisy_data_for_val)  # Target uses same noise setting
         elif graph_type == "full_mesh":
-            graph_t0_cpu = vtk_to_fullmesh_graph(path_t0, velocity_key=graph_config.get("velocity_key"), pressure_key=graph_config.get("pressure_key"))
-            graph_t1_cpu = vtk_to_fullmesh_graph(path_t1, velocity_key=graph_config.get("velocity_key"), pressure_key=graph_config.get("pressure_key"))
+            graph_t0_cpu = vtk_to_fullmesh_graph(path_t0, velocity_key=graph_config.get("velocity_key"),
+                                                 pressure_key=graph_config.get("pressure_key"))
+            graph_t1_cpu = vtk_to_fullmesh_graph(path_t1, velocity_key=graph_config.get("velocity_key"),
+                                                 pressure_key=graph_config.get("pressure_key"))
         else:
             raise ValueError(f"Unsupported graph_type for validation: {graph_type}")
 
@@ -627,6 +665,7 @@ def validate_on_pairs(
         model_output_t1_cpu = model_output_t1.cpu()
         pred_vel_t1_cpu = model_output_t1_cpu[:, :3]
         true_vel_t1_cpu = graph_t1.x.cpu() # graph_t1.x is true velocity
+
 
         # --- Standard Metrics Calculation ---
         mse = F.mse_loss(pred_vel_t1_cpu, true_vel_t1_cpu).item()
@@ -647,6 +686,7 @@ def validate_on_pairs(
         # Divergence calculated on predicted velocity (needs graph structure from graph_t0 or graph_t1)
         # Using graph_t1 (current time step) for consistency with N-S loss calculation structure.
         div_pred_tensor = calculate_divergence(model_output_t1[:, :3], graph_t1) # Pass model_output_t1's velocity part
+
         metrics_list["mse_div"].append((div_pred_tensor.cpu() ** 2).mean().item())
 
         cos_sim = cosine_similarity_metric(pred_vel_t1_cpu.numpy(), true_vel_t1_cpu.numpy())
@@ -677,6 +717,7 @@ def validate_on_pairs(
         else:
             metrics_list["nrmse_p"].append(np.nan) # Pressure not available or not predicted
 
+
         points_np_frame = graph_t1.pos.cpu().numpy()
 
         # Vorticity calculation and metric removed
@@ -690,13 +731,14 @@ def validate_on_pairs(
         #     else: metrics_list["mse_vorticity_mag"].append(np.nan)
         # else: metrics_list["mse_vorticity_mag"].append(np.nan)
 
-
         # --- Probe Data Extraction and Logging ---
         if probes_enabled and current_case_name in case_probe_definitions and case_probe_definitions[current_case_name]:
-            frame_time_val = graph_t0.time.item() if hasattr(graph_t0, 'time') and graph_t0.time is not None else float(i)
+            frame_time_val = graph_t0.time.item() if hasattr(graph_t0, 'time') and graph_t0.time is not None else float(
+                i)
 
-            for probe_idx, (target_coord_str, node_idx, target_coord_actual_xyz) in enumerate(case_probe_definitions[current_case_name]):
-                if 0 <= node_idx < true_vel_t1.shape[0]: # Check if node_idx is valid for current graph
+            for probe_idx, (target_coord_str, node_idx, target_coord_actual_xyz) in enumerate(
+                    case_probe_definitions[current_case_name]):
+                if 0 <= node_idx < true_vel_t1.shape[0]:  # Check if node_idx is valid for current graph
                     true_probe_vel_vals = true_vel_t1[node_idx].cpu().numpy()
                     pred_probe_vel_vals = predicted_vel_t1[node_idx].cpu().numpy()
 
@@ -724,12 +766,13 @@ def validate_on_pairs(
                         "probe_target_y": target_coord_actual_xyz[1],
                         "probe_target_z": target_coord_actual_xyz[2],
                         "node_idx": node_idx,
-                        "true_vx": true_probe_vel_vals[0], "true_vy": true_probe_vel_vals[1], "true_vz": true_probe_vel_vals[2] if len(true_probe_vel_vals) == 3 else 0.0,
-                        "pred_vx": pred_probe_vel_vals[0], "pred_vy": pred_probe_vel_vals[1], "pred_vz": pred_probe_vel_vals[2] if len(pred_probe_vel_vals) == 3 else 0.0,
+                        "true_vx": true_probe_vel_vals[0], "true_vy": true_probe_vel_vals[1],
+                        "true_vz": true_probe_vel_vals[2] if len(true_probe_vel_vals) == 3 else 0.0,
+                        "pred_vx": pred_probe_vel_vals[0], "pred_vy": pred_probe_vel_vals[1],
+                        "pred_vz": pred_probe_vel_vals[2] if len(pred_probe_vel_vals) == 3 else 0.0,
                         "true_mag": true_probe_mag_val, "pred_mag": pred_probe_mag_val, "error_mag": error_probe_mag_val
                     })
         # --- End Probe Data ---
-
 
         # --- VTK Saving and Plotting (using points_np_frame) ---
         if save_fields_vtk and output_base_dir and points_np_frame is not None:
@@ -738,7 +781,8 @@ def validate_on_pairs(
                 frame_name_stem = path_t1.stem
                 # case_name is current_case_name
                 epoch_folder_name = f"epoch_{epoch_num}" if epoch_num >= 0 else "final_validation"
-                vtk_output_dir = Path(output_base_dir) / "validation_fields" / model_name / epoch_folder_name / current_case_name
+                vtk_output_dir = Path(
+                    output_base_dir) / "validation_fields" / model_name / epoch_folder_name / current_case_name
                 vtk_output_dir.mkdir(parents=True, exist_ok=True)
                 vtk_file_path = vtk_output_dir / f"{frame_name_stem}_fields.vtk"
 
@@ -749,7 +793,7 @@ def validate_on_pairs(
                 point_data_for_vtk = {
                     "true_velocity": true_vel_np,
                     "predicted_velocity": pred_vel_np,
-                    "delta_velocity_vector": delta_v_vectors, # Add delta_v vector field
+                    "delta_velocity_vector": delta_v_vectors,  # Add delta_v vector field
                     "velocity_error_magnitude": error_mag_for_vtk.cpu().numpy()
                 }
                 # Vorticity fields removed from VTK output
@@ -757,7 +801,6 @@ def validate_on_pairs(
                 #     # true_vort_mag_np and pred_vort_mag_np already computed if 3D
                 #     if true_vort_mag_np is not None: point_data_for_vtk["true_vorticity_magnitude"] = true_vort_mag_np
                 #     if pred_vort_mag_np is not None: point_data_for_vtk["predicted_vorticity_magnitude"] = pred_vort_mag_np
-
 
                 write_vtk_with_fields(str(vtk_file_path), points_np_frame, point_data_for_vtk)
             except Exception as e_vtk:
@@ -768,9 +811,9 @@ def validate_on_pairs(
             # Vorticity data removed from this call
             _log_and_save_field_plots(
                 points_np=points_np_frame, true_vel_tensor=true_vel_t1, pred_vel_tensor=predicted_vel_t1,
-                error_mag_tensor=error_mag_tensor_for_plot, pred_div_tensor=div_pred_tensor, # Pass div_pred_tensor
+                error_mag_tensor=error_mag_tensor_for_plot, pred_div_tensor=div_pred_tensor,  # Pass div_pred_tensor
                 # pred_vort_mag_np=None, # Vorticity removed
-                point_compliance_np=point_compliance_data, # Pass new compliance data
+                point_compliance_np=point_compliance_data,  # Pass new compliance data
                 path_t1=path_t1, epoch_num=epoch_num, current_sample_global_idx=i,
                 output_base_dir=output_base_dir, wandb_run=wandb_run, model_name=model_name
             )
@@ -780,7 +823,8 @@ def validate_on_pairs(
     if wandb_run and probes_enabled and wandb_table_probe_errors_data:
         probe_table_columns = ["Case", "ProbeID", "TargetX", "TargetY", "TargetZ", "ErrorMagnitude"]
         probe_error_table = wandb.Table(columns=probe_table_columns, data=wandb_table_probe_errors_data)
-        wandb_run.log({f"{model_name}/Probes/ErrorMagnitudes_Epoch{epoch_num}": probe_error_table}, step=epoch_num, commit=False) # commit=False, main log call will commit
+        wandb_run.log({f"{model_name}/Probes/ErrorMagnitudes_Epoch{epoch_num}": probe_error_table}, step=epoch_num,
+                      commit=False)  # commit=False, main log call will commit
 
     # --- Aggregation of standard metrics ---
     avg_metrics = {key: float(np.nanmean(values) if len(values) > 0 and np.any(np.isfinite(values)) else np.nan)
@@ -797,6 +841,7 @@ def validate_on_pairs(
         "val_perc_points_within_10_rel_err": avg_metrics.get("perc_points_within_10_rel_err", np.nan),
         "val_nrmse_vel": avg_metrics.get("nrmse_vel", np.nan), # Added NRMSE vel
         "val_nrmse_p": avg_metrics.get("nrmse_p", np.nan),     # Added NRMSE pressure
+
         "val_cosine_sim": avg_metrics.get("cosine_sim", np.nan),
         "val_avg_max_true_vel_mag": avg_metrics.get("max_true_vel_mag", np.nan),
         "val_avg_max_pred_vel_mag": avg_metrics.get("max_pred_vel_mag", np.nan)
@@ -849,6 +894,7 @@ if __name__ == '__main__':
     graph_cfg = {
         "k": 5, "down_n": None,
         "velocity_key": "U", "pressure_key": "p", # Added pressure_key for PairedFrameDataset
+
         "noisy_velocity_key_suffix": "_noisy"
     }
     # Loss config: include new loss weights, even if zero for some tests
@@ -857,6 +903,7 @@ if __name__ == '__main__':
         "navier_stokes": 0.0, "lbc": 0.0 # Keep N-S and LBC off by default for this basic test
     }
     re_test = 100.0 # Dummy Reynolds number
+
     hist_bins = 16
 
     # Dataset and DataLoader
@@ -873,6 +920,7 @@ if __name__ == '__main__':
     points_np_test = np.random.rand(30, 3).astype(np.float64)
     velocity_np_test = np.random.rand(30, 3).astype(np.float32)
     pressure_np_test = np.random.rand(30).astype(np.float32) # Scalar pressure
+
     dummy_msh_with_p = meshio.Mesh(points_np_test, point_data={"U": velocity_np_test, "p": pressure_np_test})
 
     # Overwrite existing dummy VTKs with new ones that include pressure
@@ -891,6 +939,7 @@ if __name__ == '__main__':
     train_ds = PairedFrameDataset(
         train_frame_pairs_noisy_with_p, graph_cfg, graph_type="knn",
         use_noisy_data=True # device=test_device was removed from PairedFrameDataset
+
     )
     train_loader_pyg = DataLoader(train_ds, batch_size=2, shuffle=True)
 
@@ -939,6 +988,7 @@ if __name__ == '__main__':
         device=test_device,
         dynamic_balancing_cfg=dummy_dlb_cfg_on
     )
+
     print(f"Epoch training metrics (DLB ON): {epoch_metrics_dlb_on}")
     assert "total" in epoch_metrics_dlb_on and isinstance(epoch_metrics_dlb_on["total"], float)
     assert "alpha_final_batch" in epoch_metrics_dlb_on and isinstance(epoch_metrics_dlb_on["alpha_final_batch"], float)
@@ -947,6 +997,7 @@ if __name__ == '__main__':
     if loss_cfg_for_dlb_on.get("navier_stokes",0) > 0:
         assert "navier_stokes_momentum" in epoch_metrics_dlb_on
     if loss_cfg_for_dlb_on.get("lbc",0) > 0:
+
         assert "lbc" in epoch_metrics_dlb_on
 
     print("train_single_epoch test passed.")
@@ -972,6 +1023,7 @@ if __name__ == '__main__':
         "default_graph_type": "knn", # For vtk_to_knn_graph call within validate_on_pairs
         "validation_during_training": { # To ensure val_graph_config is used
              "val_graph_config": graph_cfg
+
         }
         # Add other keys if validate_on_pairs starts depending on them (e.g. analysis_probes)
     }
