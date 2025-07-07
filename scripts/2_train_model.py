@@ -95,6 +95,18 @@ def main():
         help="Specify whether to use 'noisy' or 'clean' dataset for training and primary validation. Default: noisy."
     )
 
+    # Hyperparameters for W&B Sweeps
+    parser.add_argument("--h_dim", type=int, help="Override model_config.h_dim.")
+    parser.add_argument("--layers", type=int, help="Override model_config.layers.")
+    parser.add_argument("--loss_supervised_weight", type=float, help="Override loss_config.weights.supervised.")
+    parser.add_argument("--loss_divergence_weight", type=float, help="Override loss_config.weights.divergence.")
+    parser.add_argument("--loss_histogram_weight", type=float, help="Override loss_config.weights.histogram.")
+    parser.add_argument("--regularization_type", type=str, choices=["None", "L1", "L2"], help="Override regularization_type.")
+    parser.add_argument("--regularization_lambda", type=float, help="Override regularization_lambda.")
+    parser.add_argument("--encoder_mlp_layers", type=int, help="Override encoder_mlp_layers.")
+    parser.add_argument("--decoder_mlp_layers", type=int, help="Override decoder_mlp_layers.")
+    parser.add_argument("--gnn_step_mlp_layers", type=int, help="Override gnn_step_mlp_layers.")
+
     args = parser.parse_args()
 
     # --- 1. Configuration Loading ---
@@ -107,6 +119,35 @@ def main():
     if args.lr is not None: cfg["lr"] = args.lr
     if args.device is not None: cfg["device"] = args.device
     if args.output_base_dir is not None: cfg["output_base_dir"] = args.output_base_dir
+
+    # Update cfg with sweep hyperparameters
+    if args.h_dim is not None:
+        if "model_config" not in cfg: cfg["model_config"] = {}
+        cfg["model_config"]["h_dim"] = args.h_dim
+    if args.layers is not None:
+        if "model_config" not in cfg: cfg["model_config"] = {}
+        cfg["model_config"]["layers"] = args.layers
+
+    if "loss_config" not in cfg: cfg["loss_config"] = {}
+    if "weights" not in cfg["loss_config"]: cfg["loss_config"]["weights"] = {}
+    if args.loss_supervised_weight is not None:
+        cfg["loss_config"]["weights"]["supervised"] = args.loss_supervised_weight
+    if args.loss_divergence_weight is not None:
+        cfg["loss_config"]["weights"]["divergence"] = args.loss_divergence_weight
+    if args.loss_histogram_weight is not None:
+        cfg["loss_config"]["weights"]["histogram"] = args.loss_histogram_weight
+
+    if args.regularization_type is not None:
+        cfg["regularization_type"] = args.regularization_type
+    if args.regularization_lambda is not None:
+        cfg["regularization_lambda"] = args.regularization_lambda
+
+    if args.encoder_mlp_layers is not None:
+        cfg["encoder_mlp_layers"] = args.encoder_mlp_layers
+    if args.decoder_mlp_layers is not None:
+        cfg["decoder_mlp_layers"] = args.decoder_mlp_layers
+    if args.gnn_step_mlp_layers is not None:
+        cfg["gnn_step_mlp_layers"] = args.gnn_step_mlp_layers
 
     run_name = get_run_name(args.run_name)
     cfg["run_name"] = run_name # Store in config for W&B and other uses
