@@ -354,6 +354,7 @@ def train_single_epoch(
                 # Histogram loss needs divergence values; calculate them once if not already from L_PDE
                 div_for_hist = calculate_divergence(model_output_t1[:,:3], graph_t1) # Removed losses. prefix
                 loss_hist_val = wasserstein1_histogram_loss(div_for_hist, histogram_bins) # Removed losses. prefix
+
                 total_loss += current_loss_weights["histogram"] * loss_hist_val
 
             # Store individual (unweighted) losses for aggregation
