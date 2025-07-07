@@ -301,6 +301,8 @@ def main():
             print(f"DEBUG: Epoch {epoch} Train Metrics: {train_metrics}")
 
             current_lr = optimizer.param_groups[0]['lr']
+            val_metrics = {} # Initialize val_metrics here to ensure it always exists
+
             log_dict_epoch = {
                 f"{model_name}/train_loss_total": train_metrics.get("total", np.nan),
                 f"{model_name}/train_loss_sup": train_metrics.get("supervised", np.nan),
