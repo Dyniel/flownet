@@ -15,7 +15,13 @@ from torch_geometric.loader import DataLoader  # Use PyG DataLoader
 from torch_geometric.data import Data
 import torch.nn.functional as F  # For direct use if needed, though losses module is preferred
 
-from .losses import combined_loss, calculate_divergence  # Assuming losses.py is in the same package
+from .losses import (
+    combined_loss,
+    calculate_divergence,
+    navier_stokes_loss,
+    boundary_condition_loss,
+    wasserstein1_histogram_loss
+)
 from .data_utils import vtk_to_knn_graph  # Or a more general graph loader if needed for validation
 from .utils import get_device, write_vtk_with_fields  # For device management and VTK writing
 from .metrics import calculate_vorticity_magnitude  # For vorticity calculation
@@ -270,8 +276,8 @@ def train_single_epoch(
             # navier_stokes_loss returns (total_ns_loss, momentum_loss, continuity_loss)
             # We need them unreduced (per node) if we want to apply custom reduction later,
             # but for grad norm calculation, scalar loss value is fine.
-            _, loss_pde_mom, loss_pde_cont = losses.navier_stokes_loss(
-                model_output_t1, graph_t0, graph_t1, reynolds_number if reynolds_number is not None else 1.0, # Temp Re if None but N-S active
+            _, loss_pde_mom, loss_pde_cont = navier_stokes_loss( # Removed losses. prefix
+                model_output_t1, graph_t0, graph_t1, reynolds_number if reynolds_number is not None else 1.0,
                 reduction='mean'
             )
         # L_PDE is the sum of momentum and continuity residuals (squared and meaned)
@@ -280,8 +286,8 @@ def train_single_epoch(
         # Boundary condition loss (L_bc)
         loss_lbc = torch.tensor(0.0, device=device)
         if loss_weights.get("lbc", 0.0) > 0.0:
-            loss_lbc = losses.boundary_condition_loss(
-                model_output_t1[:,:3], boundary_mask_t1, 0.0, reduction='mean' # Assuming target 0 for now
+            loss_lbc = boundary_condition_loss( # Removed losses. prefix
+                model_output_t1[:,:3], boundary_mask_t1, 0.0, reduction='mean'
             )
 
         # --- Dynamic Loss Balancing (if enabled) ---
@@ -346,8 +352,9 @@ def train_single_epoch(
             loss_hist_val = torch.tensor(0.0, device=device)
             if current_loss_weights.get("histogram", 0.0) > 0:
                 # Histogram loss needs divergence values; calculate them once if not already from L_PDE
-                div_for_hist = losses.calculate_divergence(model_output_t1[:,:3], graph_t1)
-                loss_hist_val = losses.wasserstein1_histogram_loss(div_for_hist, histogram_bins)
+                div_for_hist = calculate_divergence(model_output_t1[:,:3], graph_t1) # Removed losses. prefix
+                loss_hist_val = wasserstein1_histogram_loss(div_for_hist, histogram_bins) # Removed losses. prefix
+
                 total_loss += current_loss_weights["histogram"] * loss_hist_val
 
             # Store individual (unweighted) losses for aggregation
