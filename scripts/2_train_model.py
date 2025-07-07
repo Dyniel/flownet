@@ -115,6 +115,25 @@ def main():
     device = get_device(cfg.get("device", "auto"))
     print(f"Using device: {device}")
 
+    # Extract Reynolds number and check if required
+    physics_cfg = cfg.get("physics", {})
+    reynolds_number = physics_cfg.get("reynolds_number")
+
+    # Loss configuration (weights and dynamic balancing)
+    loss_cfg_main = cfg.get("loss_config", {})
+    loss_weights_main_cfg = loss_cfg_main.get("weights", {})
+    dynamic_balancing_cfg_main = loss_cfg_main.get("dynamic_loss_balancing", {"enabled": False}) # Get DLB config
+
+    print(f"DEBUG: Reynolds number from config: {reynolds_number}")
+    print(f"DEBUG: Loss weights from config: {loss_weights_main_cfg}")
+    print(f"DEBUG: Dynamic Loss Balancing config: {dynamic_balancing_cfg_main}")
+
+    if loss_weights_main_cfg.get("navier_stokes", 0.0) > 0.0 and reynolds_number is None:
+        raise ValueError(
+            "Reynolds number (`physics.reynolds_number`) must be provided in config "
+            "if 'navier_stokes' loss weight is > 0."
+        )
+
     # --- 2. Initialization ---
     if args.no_wandb or cfg.get("no_wandb", False):
         wandb_run = None
@@ -179,8 +198,15 @@ def main():
         print(f"Warning: No validation frame pairs found in {val_data_path_to_use} for during-training validation.")
         # Allow continuation if validation is optional or handled differently
 
-    graph_build_config_train = {**cfg.get("graph_config",{}), "velocity_key": cfg["velocity_key"], "noisy_velocity_key_suffix": cfg["noisy_velocity_key_suffix"]}
+    graph_build_config_train = {
+        **cfg.get("graph_config",{}),
+        "velocity_key": cfg["velocity_key"],
+        "pressure_key": cfg.get("pressure_key", "p"), # Added pressure_key for kNN if used
+        "noisy_velocity_key_suffix": cfg["noisy_velocity_key_suffix"]
+    }
     graph_type_train = cfg.get("default_graph_type", "knn")
+    print(f"DEBUG: Training graph build config: {graph_build_config_train}")
+    print(f"DEBUG: Training graph type: {graph_type_train}")
 
     train_dataset = PairedFrameDataset(
         train_pairs, graph_build_config_train, graph_type=graph_type_train,
@@ -195,12 +221,14 @@ def main():
     csv_writer = csv.writer(csv_file)
     csv_header = [
         "epoch", "model_name",
-        "train_loss_total", "train_loss_sup", "train_loss_div", "train_loss_hist", "train_loss_reg",
+        "train_loss_total", "train_loss_sup", "train_loss_div",
+        "train_loss_ns_mom", "train_loss_lbc",
+        "train_loss_hist", "train_loss_reg",
+        "train_alpha_dlb", "train_beta_dlb",
         "val_mse", "val_rmse_mag", "val_mse_div", "val_cosine_sim",
         "val_mse_x", "val_mse_y", "val_mse_z",
-        "val_perc_points_within_10_rel_err", # Added new metric
-
-        # "val_mse_vorticity_mag", # Removed
+        "val_perc_points_within_10_rel_err",
+        "val_nrmse_vel", "val_nrmse_p", # Added NRMSE metrics
         "val_avg_max_true_vel_mag", "val_avg_max_pred_vel_mag",
         "lr", "sample_rel_tke_err", "sample_cosine_sim"
     ]
@@ -261,24 +289,36 @@ def main():
 
             train_metrics = train_single_epoch(
                 model, train_loader, optimizer,
-                loss_weights=cfg.get("loss_config",{}).get("weights",{}),
+                loss_weights=loss_weights_main_cfg,
+                reynolds_number=reynolds_number,
                 histogram_bins=cfg.get("loss_config",{}).get("histogram_bins", cfg["nbins"]),
                 device=device,
                 clip_grad_norm_value=cfg.get("clip_grad_norm"),
                 regularization_type=cfg.get("regularization_type", "None"),
-                regularization_lambda=cfg.get("regularization_lambda", 0.0)
+                regularization_lambda=cfg.get("regularization_lambda", 0.0),
+                dynamic_balancing_cfg=dynamic_balancing_cfg_main # Pass DLB config
             )
+            print(f"DEBUG: Epoch {epoch} Train Metrics: {train_metrics}")
 
             current_lr = optimizer.param_groups[0]['lr']
             log_dict_epoch = {
-                f"{model_name}/train_loss_total": train_metrics["total"],
-                f"{model_name}/train_loss_sup": train_metrics["supervised"],
-                f"{model_name}/train_loss_div": train_metrics["divergence"],
-                f"{model_name}/train_loss_hist": train_metrics["histogram"],
-                f"{model_name}/train_loss_reg": train_metrics["regularization"], # Added regularization loss
+                f"{model_name}/train_loss_total": train_metrics.get("total", np.nan),
+                f"{model_name}/train_loss_sup": train_metrics.get("supervised", np.nan),
+                f"{model_name}/train_loss_div": train_metrics.get("divergence", np.nan),
+                f"{model_name}/train_loss_ns_mom": train_metrics.get("navier_stokes_momentum", np.nan),
+                f"{model_name}/train_loss_lbc": train_metrics.get("lbc", np.nan),
+                f"{model_name}/train_loss_hist": train_metrics.get("histogram", np.nan),
+                f"{model_name}/train_loss_reg": train_metrics.get("regularization", np.nan),
+                f"{model_name}/train_alpha_dlb": train_metrics.get("alpha_final_batch", np.nan),
+                f"{model_name}/train_beta_dlb": train_metrics.get("beta_final_batch", np.nan),
                 f"{model_name}/learning_rate": current_lr,
                 "epoch": epoch
             }
+            # Add NRMSE to W&B log if available in val_metrics
+            if "val_nrmse_vel" in val_metrics:
+                log_dict_epoch[f"{model_name}/val_nrmse_vel"] = val_metrics["val_nrmse_vel"]
+            if "val_nrmse_p" in val_metrics:
+                log_dict_epoch[f"{model_name}/val_nrmse_p"] = val_metrics["val_nrmse_p"]
 
             # Perform validation (during training)
             val_metrics = {}
@@ -389,17 +429,30 @@ def main():
             # Log to CSV
             csv_writer.writerow([
                 epoch, model_name,
-                train_metrics["total"], train_metrics["supervised"],
-                train_metrics["divergence"], train_metrics["histogram"], train_metrics["regularization"],
-                val_metrics.get("val_mse", np.nan), val_metrics.get("val_rmse_mag", np.nan),
-                val_metrics.get("val_mse_div", np.nan), val_metrics.get("val_cosine_sim", np.nan),
-                val_metrics.get("val_mse_x", np.nan), val_metrics.get("val_mse_y", np.nan), val_metrics.get("val_mse_z", np.nan),
-                val_metrics.get("val_perc_points_within_10_rel_err", np.nan), # Added new metric
-
-                # val_metrics.get("val_mse_vorticity_mag", np.nan), # Removed
+                train_metrics.get("total", np.nan),
+                train_metrics.get("supervised", np.nan),
+                train_metrics.get("divergence", np.nan),
+                train_metrics.get("navier_stokes_momentum", np.nan),
+                train_metrics.get("lbc", np.nan),
+                train_metrics.get("histogram", np.nan),
+                train_metrics.get("regularization", np.nan),
+                train_metrics.get("alpha_final_batch", np.nan),
+                train_metrics.get("beta_final_batch", np.nan),
+                val_metrics.get("val_mse", np.nan),
+                val_metrics.get("val_rmse_mag", np.nan),
+                val_metrics.get("val_mse_div", np.nan),
+                val_metrics.get("val_cosine_sim", np.nan),
+                val_metrics.get("val_mse_x", np.nan),
+                val_metrics.get("val_mse_y", np.nan),
+                val_metrics.get("val_mse_z", np.nan),
+                val_metrics.get("val_perc_points_within_10_rel_err", np.nan),
+                val_metrics.get("val_nrmse_vel", np.nan), # Added NRMSE vel to CSV
+                val_metrics.get("val_nrmse_p", np.nan),   # Added NRMSE pressure to CSV
                 val_metrics.get("val_avg_max_true_vel_mag", np.nan),
                 val_metrics.get("val_avg_max_pred_vel_mag", np.nan),
-                current_lr, sample_rel_tke_err, sample_cos_sim
+                current_lr,
+                sample_rel_tke_err,
+                sample_cos_sim
             ])
             csv_file.flush() # Ensure data is written
 
