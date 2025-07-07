@@ -1,28 +1,124 @@
 # CFD GNN Project
 
-This project provides a comprehensive suite for training and validating Graph Neural Network (GNN) models on Computational Fluid Dynamics (CFD) data. It supports noise injection, model training (FlowNet, RotFlowNet/Gao), various validation techniques (k-NN graph based, full mesh graph based, histogram JSD analysis), and extensive logging with Weights & Biases.
+## What is this project about?
 
-## Core Features
+Imagine you want to understand how air flows around a car, how water moves through a pipe, or how heat spreads in a room. Traditionally, this involves complex calculations known as Computational Fluid Dynamics (CFD). This project explores a modern approach: using Artificial Intelligence, specifically Graph Neural Networks (GNNs), to learn and predict these fluid behaviors.
 
-*   **Modular Library (`src/cfd_gnn/`)**: Reusable components for data processing, graph construction, GNN models, loss functions, metrics, training loops, and validation routines.
-*   **Script-based Workflow (`scripts/`)**: Individual scripts for each stage of the pipeline:
-    *   `1_prepare_noisy_data.py`: Injects MRI-like noise into CFD datasets.
-    *   `2_train_model.py`: Main training script for GNN models.
-    *   `3a_validate_knn.py`: Validates models using k-NN graphs.
-    *   `3b_validate_full_mesh.py`: Validates models using full mesh (tetrahedral) graphs.
-    *   `4_validate_histograms.py`: Performs standalone JSD histogram validation.
-    *   `5_combined_validation.py`: Orchestrates inference and JSD validation.
-*   **Configurable Pipeline**: Uses YAML configuration files (`config/default_config.yaml`) with CLI overrides for flexible experimentation.
-*   **Weights & Biases Integration**: Comprehensive logging of metrics, configurations, and artifacts.
-*   **Multiple Validation Strategies**: Supports both geometry-based graph construction (k-NN) and topology-based (full mesh from tetrahedra).
+Think of it like teaching a computer to understand physics by showing it many examples. Once trained, our AI model can then make quick predictions about new scenarios, potentially speeding up design processes or offering new insights into fluid dynamics.
 
-## Visual Project Overview
+This toolkit provides everything you need to:
 
-To better understand the project's organization and typical task execution, diagrams are provided below.
+*   **Prepare data:** Take standard CFD simulation results and get them ready for the AI.
+*   **Train AI models:** Teach different GNN models to understand fluid patterns.
+*   **Test and validate:** Check how well the AI has learned and how accurate its predictions are.
+*   **Analyze results:** Dig into the details of the predictions and compare them to traditional simulations.
 
-### Project Component Architecture
+Whether you're a researcher exploring AI for science, a student learning about GNNs, or an engineer interested in new simulation methods, this project offers tools and examples to get started.
 
-This diagram shows the main building blocks of the project and their interconnections.
+## Who Might Find This Project Useful?
+
+This project is designed for a range of individuals interested in the intersection of AI and scientific simulation:
+
+*   **Researchers in AI/ML:** If you're exploring how Graph Neural Networks (GNNs) or other machine learning models can be applied to physics-based problems, this project provides a sandbox and a set of tools to experiment with CFD data.
+*   **CFD Practitioners & Engineers:** If you work with Computational Fluid Dynamics and are curious about how AI can augment or accelerate traditional simulation workflows, this project offers a practical starting point. You could explore AI for tasks like surrogate modeling, parameter space exploration, or learning from existing simulation data.
+*   **Students and Learners:** If you're studying GNNs, data-driven scientific computing, or advanced Python applications, this codebase can serve as a complex, real-world example. It demonstrates how to structure a larger project, manage data, configure experiments, and integrate various libraries.
+*   **Software Developers:** If you're interested in the software architecture for scientific machine learning pipelines, this project showcases one way to organize such a system, from data preparation scripts to core model libraries and experiment logging.
+
+**What background is helpful?**
+
+*   **Some Python knowledge:** You'll be working with Python scripts and libraries.
+*   **Familiarity with command-line basics:** Running scripts, navigating directories.
+*   **Conceptual understanding of AI/ML (helpful but not essential to start):** Knowing a bit about training models, data, etc., will make things easier, but you can also learn as you go.
+*   **Interest in fluid dynamics or CFD (helpful for context):** Understanding the data's origin can be beneficial, but the tools can be used even if you're primarily focused on the AI aspects.
+
+The project aims to be a comprehensive toolkit, so different users might focus on different parts of it.
+
+## Key Capabilities
+
+This project is packed with features to help you explore AI for fluid dynamics:
+
+*   **Flexible Toolkit (`src/cfd_gnn/`)**: A collection of building blocks for processing your simulation data, creating the network structures (graphs) our AI learns from, defining the AI models themselves, and checking how well they're doing.
+*   **Step-by-Step Tools (`scripts/`)**: Easy-to-use scripts guide you through the whole process:
+    *   `1_prepare_noisy_data.py`: Simulate real-world imperfections by adding noise to your data.
+    *   `2_train_model.py`: Train your AI model to learn from the data.
+    *   `3a_validate_knn.py` & `3b_validate_full_mesh.py`: Test your trained model using different ways of looking at the data points (k-NN or full mesh).
+    *   `4_validate_histograms.py` & `5_combined_validation.py`: Perform in-depth checks on how well the model's predictions match the original simulations.
+*   **Easy Experimentation**: Change how the AI learns and processes data through simple configuration files (YAML format). You can also adjust settings directly when you run a script.
+*   **Track Your Progress (Weights & Biases)**: Automatically log and visualize your experiments, making it easy to compare results and share findings.
+*   **Versatile Testing Methods**: Evaluate your AI models in different ways, whether by looking at nearby data points (k-NN) or the overall structure of the simulation (full mesh).
+
+## Your First Journey with this Project: A Conceptual Walkthrough
+
+So, you've got the project set up (as shown in "Getting Started: Setting Up Your Environment") and you're wondering: "What now?" Let's walk through a typical first exploration, focusing on the *why* and *what* rather than the specific commands (you can find those in the "Quick Start" and "Key Script Examples" sections).
+
+**Phase 1: Understanding the Landscape**
+
+1.  **Goal:** Get a feel for what this project does and how it's structured.
+2.  **Your Steps:**
+    *   **Read the Intro:** You've likely already read the "What is this project about?" and "Who Might Find This Project Useful?" sections. Good start!
+    *   **Scan Key Capabilities:** This gives you a quick list of the main things you can do.
+    *   **Look at the Pictures (Visual Project Overview):** The diagrams here are your maps.
+        *   The "Project Component Architecture" shows how all the pieces (data, scripts, code) connect.
+        *   The "Workflow" diagram gives you a bird's-eye view of the typical process. Don't memorize them, just get a general sense.
+    *   **Peek at the Configuration (`config/default_config.yaml`):** Open this file. You don't need to understand every line, but scrolling through it shows you all the different settings you *can* control. This gives you an idea of the project's flexibility.
+
+**Phase 2: A Simple First Experiment - Training on "Perfect" Data**
+
+1.  **Goal:** Train an AI model on some clean, ideal simulation data to see if it can learn basic fluid patterns. This is like teaching a child to recognize shapes with perfect examples before showing them messy drawings.
+2.  **Your Steps (Conceptual):**
+    *   **Prepare Your Data:**
+        *   You'll need some CFD simulation data (VTK files). If you don't have your own, you might look for example datasets or use a very simple one you create.
+        *   Make sure the project knows where to find this data by setting the correct paths in a copy of the `default_config.yaml` file.
+    *   **Choose Your Settings (Configuration):**
+        *   For a first run, you might stick mostly to the defaults in your copied config file.
+        *   You'd ensure settings point to your *clean* data for both training and any quick tests during training.
+        *   You'd pick a model to train (e.g., "FlowNet").
+        *   Give your experiment a unique name (e.g., "MyFirstCleanRun").
+    *   **Start the Training:**
+        *   You'd run the `2_train_model.py` script, telling it to use your configuration file.
+    *   **Watch and Wait (a bit):**
+        *   The script will start processing data, building the AI model, and then begin training. It will print updates to your screen.
+        *   If you set up Weights & Biases, you could open your web browser and see graphs of how the model is learning in real-time!
+    *   **Check the Output:**
+        *   Once training is done, the project will save the trained AI model (usually in the `outputs/YourRunName/models/` folder). It will also have created log files with performance numbers.
+
+**Phase 3: Seeing What the AI Learned**
+
+1.  **Goal:** Take your newly trained AI model and test it on some data it hasn't seen before. How good are its predictions?
+2.  **Your Steps (Conceptual):**
+    *   **Choose Your Test Data:** This would typically be a separate set of clean simulation data that the AI wasn't trained on.
+    *   **Run a Validation Script:** Use one of the validation scripts (like `3a_validate_knn.py` or `5_combined_validation.py`), telling it:
+        *   Which trained AI model to use (the one you just saved).
+        *   Where your test data is.
+        *   Where to save the results of this test.
+    *   **Examine the Results:**
+        *   The script will produce detailed reports (often CSV files) showing various performance scores.
+        *   Crucially, it will often save the AI's predictions as new VTK files. You can open these in a visualization tool (like ParaView) alongside the original "ground truth" VTK files to *see* how well the AI did. Are the flow patterns similar? Where does it make mistakes?
+
+**Phase 4: Exploring Further**
+
+From here, the path is yours! You might:
+
+*   **Try Noisy Data:** See how the model performs if you train it on data with simulated imperfections (use `1_prepare_noisy_data.py` first). This is like seeing if the child can still recognize shapes in messy drawings.
+*   **Experiment with Settings:** Change model size, training duration, or how data points are connected (graph type) in your configuration file and see how it affects the results.
+*   **Dive Deeper into Analysis:** Use the "Detailed Data Probing" features to look at specific points or slices in your flow.
+*   **Bring Your Own Data:** Adapt the project to work with your own CFD simulations.
+
+This walkthrough is just one example. The key is to start simple, understand the basic workflow, and then gradually explore the more advanced features and settings as your curiosity and needs grow. Don't be afraid to experiment – that's what this toolkit is for!
+
+## Visualizing the Project
+
+To help you get a clearer picture of how this project works, we've included a few diagrams. These visuals show:
+
+1.  **The Big Picture (Project Component Architecture):** How the different parts of the project (data, code, scripts, outputs) fit together.
+2.  **Inside the AI (Model Architectures):** A simplified look at the structure of the AI models that learn to predict fluid behavior.
+3.  **How Things Get Done (Workflow):** The typical steps you'd take when using the project, from preparing data to analyzing results.
+
+Don't worry if these look complex at first! They're here to provide a map as you explore the project.
+
+### 1. The Big Picture: Project Component Architecture
+
+This diagram shows the main building blocks of the project and how they connect. You'll see where your data goes, which parts of the code do what, and where the results come from.
 
 ```mermaid
 graph LR
@@ -95,9 +191,9 @@ graph LR
     runOutputs --> wandb
 ```
 
-### Model Architectures
+### 2. Inside the AI: Model Architectures
 
-The GNN models used in this project, `FlowNet` and `RotFlowNet (Gao)`, share a common underlying architecture defined by the `BaseFlowGNN` class. The main components and data flow are illustrated below. Differences between `FlowNet` and `RotFlowNet (Gao)` typically arise from the specific input features provided during graph construction (e.g., standard Cartesian coordinates for `FlowNet` vs. potentially cylindrical or augmented features for `RotFlowNet`) rather than from a structural difference in the neural network itself.
+The AI models (FlowNet and RotFlowNet/Gao) are types of Graph Neural Networks. This diagram gives a simplified view of their internal structure, showing how they process information to make predictions.
 
 ```mermaid
 graph TD
@@ -182,9 +278,9 @@ graph TD
     end
 ```
 
-### Workflow
+### 3. How Things Get Done: Workflow
 
-This diagram illustrates the typical sequence of steps performed when working with the project, from data preparation to results analysis.
+This diagram shows the usual order of operations when you use the project – from getting your data ready, to training the AI, and finally, checking its performance.
 
 ```mermaid
 sequenceDiagram
@@ -247,21 +343,23 @@ sequenceDiagram
     Note over User,OutputDir: User analyzes results in W&B and local files in OutputDir.
 ```
 
-## Common Usage Scenarios (Quick Start)
+## Quick Start: What Can You Do?
 
-Below are examples of how to run training and validation for various common setups. These assume you are in the project's root directory and have your virtual environment activated.
+This section gives you a hands-on look at how to use the project for common tasks. We'll show you the commands to run and briefly explain what they do.
 
-**Important Notes Before Starting:**
+**Before you begin:**
+*   Make sure you're in the project's main directory and have your virtual environment activated (see "Setup" section).
+*   **Configuration is Key:** Most settings are controlled by YAML files in the `config/` directory (like `default_config.yaml`). The commands below might mention specific settings to check in these files. You can also override many settings directly in the command line.
+*   **Name Your Runs:** Use the `--run-name` option to give each experiment a unique name. This helps organize your results.
+*   **Choose Your Model:** Use `--models-to-train` to pick the AI model you want to use (e.g., `FlowNet`).
 
-*   **Configuration File:** Many settings (e.g., paths to main datasets `train_root`, `val_root`, model parameters like `h_dim`, `layers`) are loaded from a YAML file (e.g., `config/default_config.yaml`, `config/test_config.yaml` for `run_experiments.py`, or a file specified by `--config`). The CLI flags shown below can override values from the configuration file.
-*   **Noisy Data Preparation:** If your scenario involves using noisy data (`--data-source noisy` or if it's the default in your config), ensure it has been generated beforehand using `scripts/1_prepare_noisy_data.py`. Paths to this data (`noisy_train_root`, `noisy_val_root`) should also be correctly set in your configuration file.
-*   **Run Name (`--run-name`):** Always provide a unique and descriptive name for each run. It will be used to create an output directory in `outputs/` and to identify the run in Weights & Biases.
-*   **Model to Train (`--models-to-train`):** Specify which model you want to train, e.g., `FlowNet` or `Gao`.
+### Scenario 1: Train and Test on "Perfect" (Clean) Data
 
-### Scenario 1: Training and Validation on CLEAN Data
-
-*   **Goal:** The model learns and is evaluated on ideal data, without simulated noise.
-*   **How:** Use the `--data-source clean` flag. Additionally, in your YAML configuration file, under the `validation_during_training` section, set `use_noisy_data: false`.
+*   **Goal:** See how well the AI can learn and make predictions when the data is ideal, without any simulated real-world imperfections (noise).
+*   **Why this is useful:** This is a good starting point to check if the model can learn the basic physics from the simulation data.
+*   **How-to:**
+    *   You'll tell the training script to use `clean` data via `--data-source clean`.
+    *   In your main YAML configuration file (e.g., `config/default_config.yaml`), ensure that the validation during training also uses clean data. Look for the `validation_during_training` section and ensure `use_noisy_data` is set to `false`.
 
 ```bash
 python scripts/2_train_model.py \
@@ -270,41 +368,44 @@ python scripts/2_train_model.py \
     --models-to-train FlowNet \
     --data-source clean \
     --epochs 100
-    # Ensure your default_config.yaml (or your --config file) has:
-    # validation_during_training:
-    #   enabled: true
-    #   use_noisy_data: false
 ```
-*If you want the command above to work without modifying the YAML file, `2_train_model.py` would need an additional CLI flag to control `validation_during_training.use_noisy_data`, or this logic would need to be more tightly coupled with `--data-source`.*
+*Developer Note: For the above command to work without YAML modification, `2_train_model.py` might need a direct CLI flag for `validation_during_training.use_noisy_data`.*
 
-### Scenario 2: Training and Validation on NOISY Data
+### Scenario 2: Train and Test on "Imperfect" (Noisy) Data
 
-*   **Goal:** A standard case where the model learns on data with added noise (simulating measurement inaccuracies, etc.) and is validated on a similarly noisy dataset.
-*   **How:** Use the `--data-source noisy` flag (this is often the default if the flag is omitted, but depends on `2_train_model.py`'s implementation and config file settings). In your YAML, `validation_during_training.use_noisy_data: true`.
+*   **Goal:** Train the AI on data that includes simulated noise (like you'd get from sensors in the real world) and test it on similarly noisy data.
+*   **Why this is useful:** This helps assess how robust the model is and how well it performs in conditions that are closer to real-life applications.
+*   **Before you start:**
+    *   You'll need to create this "noisy" data first using the `1_prepare_noisy_data.py` script. Make sure the paths in your YAML configuration point to this noisy dataset.
+    ```bash
+    # Example: Creating noisy training data
+    python scripts/1_prepare_noisy_data.py --source-dir /path/to/your/clean_training_data --output-dir /path/to/your/noisy_training_data
+    # Example: Creating noisy validation data
+    python scripts/1_prepare_noisy_data.py --source-dir /path/to/your/clean_validation_data --output-dir /path/to/your/noisy_validation_data
+    ```
+*   **How-to:**
+    *   Tell the training script to use `noisy` data via `--data-source noisy`.
+    *   In your YAML configuration, ensure `validation_during_training` also uses noisy data by setting `use_noisy_data: true`.
 
 ```bash
-# Ensure noisy data exists at the paths specified in your configuration!
-# e.g., /home/student2/ethz/CFD_Ubend_other_noisy (as per test_config.yaml)
-# You can generate it with 1_prepare_noisy_data.py:
-# python scripts/1_prepare_noisy_data.py --source-dir /path/to/clean/train --output-dir /path/to/noisy/train [--p-min ...] [--p-max ...]
-# python scripts/1_prepare_noisy_data.py --source-dir /path/to/clean/val --output-dir /path/to/noisy/val [--p-min ...] [--p-max ...]
-
 python scripts/2_train_model.py \
     --config config/default_config.yaml \
     --run-name training_on_noisy_data \
     --models-to-train FlowNet \
     --data-source noisy \
     --epochs 100
-    # Ensure your default_config.yaml (or your --config file) has:
-    # validation_during_training:
-    #   enabled: true
-    #   use_noisy_data: true
 ```
 
-### Scenario 3: Training on CLEAN Data, Validation on NOISY Data
+### Scenario 3: Train on Clean Data, Test on Noisy Data
 
-*   **Goal:** Test how a model trained on ideal data performs in noisy conditions.
-*   **How:** Use `--data-source clean` for training. In YAML, set `validation_during_training.use_noisy_data: true` for validation during training.
+*   **Goal:** See how well a model trained on "perfect" data can handle "imperfect" noisy data during testing.
+*   **Why this is useful:** This tests the model's generalization. Can it apply what it learned in ideal conditions to a more challenging, noisy environment?
+*   **Before you start:**
+    *   Ensure you have noisy validation data prepared (see Scenario 2 for how to create it).
+    *   Your YAML configuration should point to this noisy data for validation (e.g., `noisy_val_root`).
+*   **How-to:**
+    *   Train using `--data-source clean`.
+    *   In your YAML configuration, for `validation_during_training`, set `use_noisy_data: true`.
 
 ```bash
 python scripts/2_train_model.py \
@@ -313,17 +414,18 @@ python scripts/2_train_model.py \
     --models-to-train FlowNet \
     --data-source clean \
     --epochs 100
-    # Ensure your default_config.yaml (or your --config file) has:
-    # validation_during_training:
-    #   enabled: true
-    #   use_noisy_data: true
-    # (and that noisy_val_root points to noisy validation data)
 ```
 
-### Scenario 4: Training on NOISY Data, Validation on CLEAN Data
+### Scenario 4: Train on Noisy Data, Test on Clean Data
 
-*   **Goal:** See if a model trained on "harder" (noisy) data can generalize well to ideal, clean conditions.
-*   **How:** Use `--data-source noisy` for training. In YAML, set `validation_during_training.use_noisy_data: false` for validation during training.
+*   **Goal:** Determine if training on "imperfect" (noisy) data helps the model perform even better on "perfect" (clean) data.
+*   **Why this is useful:** Sometimes, training on more challenging data can make a model more robust or highlight underlying patterns more effectively, leading to strong performance even on simpler data.
+*   **Before you start:**
+    *   Ensure you have noisy training data prepared (see Scenario 2).
+    *   Your YAML configuration should point to clean data for validation (e.g., `val_root`).
+*   **How-to:**
+    *   Train using `--data-source noisy`.
+    *   In your YAML configuration, for `validation_during_training`, set `use_noisy_data: false`.
 
 ```bash
 python scripts/2_train_model.py \
@@ -332,167 +434,154 @@ python scripts/2_train_model.py \
     --models-to-train FlowNet \
     --data-source noisy \
     --epochs 100
-    # Ensure your default_config.yaml (or your --config file) has:
-    # validation_during_training:
-    #   enabled: true
-    #   use_noisy_data: false
-    # (and that val_root points to clean validation data)
 ```
 
-### Scenario 5: Controlling Graph Type (k-NN vs. Full Mesh)
+### Scenario 5: Choosing How Data Points are Connected (Graph Type)
 
-*   **Goal:** Choose the graph construction method for the model.
-*   **How:** Primarily through the YAML configuration file. In your `graph_config` section (or similar, depending on your YAML structure; e.g., `test_config.yaml` has `default_graph_type` and `graph_config`):
-    *   For **k-NN**: set `default_graph_type: "knn"`, and define `graph_config.k` (number of neighbors) and `graph_config.down_n` (number of points after downsampling; `null` or `0` for no downsampling).
-    *   For **Full Mesh**: set `default_graph_type: "full_mesh"`. Parameters `k` and `down_n` are then usually ignored.
+The AI model in this project (a Graph Neural Network) learns from how data points are connected. You can choose different ways to define these connections:
 
-**Example (modifying a section of your YAML, e.g., `my_custom_config.yaml`):**
+*   **k-Nearest Neighbors (k-NN):** Each data point connects to its 'k' closest neighbors. Good for focusing on local interactions.
+*   **Full Mesh:** Connections are based on the underlying grid structure of the simulation data (specifically, from tetrahedral cells). Good for capturing broader structural relationships.
 
+*   **Goal:** Select the method (k-NN or Full Mesh) that the AI uses to see relationships in the data.
+*   **Why this is useful:** Different connection types can affect what the model learns and how well it performs. Experimenting with this can lead to better results.
+*   **How-to:** This is mainly controlled in your YAML configuration file.
+    *   Find the `default_graph_type` setting and set it to `"knn"` or `"full_mesh"`.
+    *   If using `"knn"`, you'll also want to look at `graph_config` to set `k` (number of neighbors) and `down_n` (how much to simplify the data, if at all).
+
+**Example (section from a YAML file like `config/my_custom_config.yaml`):**
 ```yaml
 # ... other settings ...
 
-default_graph_type: "full_mesh" # or "knn"
+default_graph_type: "full_mesh"  # or "knn"
 
 graph_config:
-  k: 12          # Relevant for knn
-  down_n: 20000  # Relevant for knn, null or 0 for no downsampling
-  # ... other graph_config parameters
+  k: 12          # Important for k-NN: number of neighbors
+  down_n: 20000  # Important for k-NN: number of points to use (0 or null for all)
+  # ... other graph-related settings ...
 
 # ... rest of settings ...
 ```
-
-Then, run training with this configuration file:
+Then, run your training script, making sure it uses this configuration file:
 ```bash
 python scripts/2_train_model.py --config config/my_custom_config.yaml --run-name training_with_full_mesh --models-to-train FlowNet --epochs 100
 ```
-*Currently, `2_train_model.py` does not have CLI flags to directly switch `default_graph_type` or parameters like `k` and `down_n`. These must be set in the configuration file.*
+*Developer Note: Currently, the graph type and its specific parameters (`k`, `down_n`) are set in the configuration file, not directly by command-line options to `2_train_model.py`.*
 
-### Running Multiple Experiments (using `scripts/run_experiments.py`)
+### Bonus: Running Many Experiments Automatically
 
-The `scripts/run_experiments.py` script is designed to run a series of predefined experiments. To use it for a specific scenario from above:
+If you want to try out many different settings or scenarios at once, the `scripts/run_experiments.py` script can help.
 
-1.  **Modify `scripts/run_experiments.py`**:
-    *   Set `BASE_CONFIG_PATH` to a YAML file that has most of the required settings (e.g., correct paths, `validation_during_training.use_noisy_data`).
-    *   In the `experiments` list, leave or create only one dictionary that overrides parameters according to your chosen scenario (e.g., adding `"data_source": "clean"` or modifying `loss_config`).
+*   **Goal:** Automate running several training jobs with different configurations.
+*   **Why this is useful:** Saves time and helps you systematically explore how different parameters affect the AI's performance.
+*   **How-to:**
+    1.  You'll need to edit the `scripts/run_experiments.py` file directly.
+    2.  Inside this script, you can define a list of `experiments`. Each experiment can specify a base configuration file and then override specific settings (like the data source, number of epochs, or model parameters).
+    3.  Set `BASE_CONFIG_PATH` to your main YAML configuration.
+    4.  Define each variation in the `experiments` list.
 
-Example (excerpt from `run_experiments.py` for Scenario 1):
+**Example (conceptual snippet from `scripts/run_experiments.py`):**
 ```python
 # In scripts/run_experiments.py
-BASE_CONFIG_PATH = "config/config_for_clean_training.yaml" # Assuming this file has use_noisy_data: false
-DEFAULT_EPOCHS = 100
+BASE_CONFIG_PATH = "config/default_config.yaml" # Your starting configuration
+DEFAULT_EPOCHS = 50 # Default, can be overridden per experiment
 
 experiments = [
     {
-        "run_name_suffix": "single_clean_experiment",
-        "data_source": "clean", # Override just in case
+        "run_name_suffix": "try_clean_data",
+        "data_source": "clean",
         "models_to_train": ["FlowNet"],
-        # ... other necessary overrides ...
     },
+    {
+        "run_name_suffix": "try_noisy_data_more_epochs",
+        "data_source": "noisy",
+        "models_to_train": ["FlowNet"],
+        "epochs": 150, # Override default epochs
+    },
+    # ... add more experiments here ...
 ]
-# ... rest of the script ...
+# ... (rest of the script sets up and runs these) ...
 ```
-Then run: `python scripts/run_experiments.py`
+After setting up `scripts/run_experiments.py`, you just run:
+```bash
+python scripts/run_experiments.py
+```
+This will then execute each defined experiment one after another.
 
+## How the Project is Organized
 
-## Project Architecture and Workflow
+This project has a few main parts that work together to help you train and use AI models for fluid dynamics. Here's a general idea of how it's laid out and what each part does:
 
-This project is designed to facilitate the training and evaluation of Graph Neural Networks for CFD predictions. The architecture revolves around a core library (`src/cfd_gnn/`), a set of executable scripts (`scripts/`), and configuration files (`config/`).
+**1. Configuration Files (`config/` directory): Your Control Panel**
+   * This is where you tell the project what to do. These files (written in a format called YAML) hold all the important settings: where your data is, how the AI model should be built, how long to train it, etc.
+   * `default_config.yaml` has standard settings, but you can create your own custom configs for different experiments.
 
-### Core Components
+**2. Your Data (`data/` directory, or your specified location): The Raw Material**
+   * This is where you (typically) put your original CFD simulation data (usually a series of VTK files, which are like snapshots of the fluid flow).
+   * The project reads this data to learn from.
 
-*   **`config/`**: Contains YAML configuration files.
-    *   `default_config.yaml`: Provides default parameters for all aspects of the pipeline, from data paths and graph construction parameters to model hyperparameters and logging settings.
-    *   Custom configuration files can be created to manage different experiments. These are loaded by the scripts and can be overridden by command-line arguments.
+**3. Scripts (`scripts/` directory): The Tools that Do the Work**
+   * These are Python programs that perform specific tasks in the AI pipeline, like preparing data, training models, or testing them. You'll run these scripts from your command line.
 
-*   **`data/`**: This directory is intended as the default location for input CFD datasets.
-    *   Datasets typically consist of multiple "cases" (e.g., different simulation runs or geometries like `sUbend_011`, `sUbend_012`).
-    *   Each case contains a series of VTK files (e.g., `Frame_00_data.vtk`, `Frame_01_data.vtk`) representing snapshots of the flow field over time, usually located under a `CFD/` subdirectory within the case folder.
+**4. The "Brains" (`src/cfd_gnn/` directory): Core AI Engine**
+   * This is the heart of the project. It contains all the underlying Python code that defines the AI models, handles data processing, calculates how well the model is doing, and more. You usually won't need to change things here unless you're doing advanced development.
 
-*   **`outputs/`**: This is the default directory where all generated files are saved (and is typically gitignored).
-    *   For each run (e.g., a training run or a validation run), a subdirectory is created (often named after the `run_name`).
-    *   Inside a run's directory, you'll find:
-        *   Saved model checkpoints (e.g., `flownet_best.pth`).
-        *   Log files (e.g., `training_metrics.csv`, detailed per-frame metrics CSVs).
-        *   Predicted VTK files generated during validation.
-        *   Visualization outputs, such as JSD heatmaps or slice analysis plots.
-        *   Weights & Biases logs (if enabled and not stored elsewhere).
+**5. Results (`outputs/` directory): Where Your Findings Go**
+   * When you run experiments, the project saves results here. This includes the trained AI models, performance metrics, prediction data, and any visualizations. Each experiment usually gets its own sub-folder.
 
-*   **`scripts/`**: Contains Python scripts that drive the different stages of the machine learning pipeline. Each script typically corresponds to a specific task:
-    *   `1_prepare_noisy_data.py`: Preprocesses raw CFD data by injecting MRI-like noise to velocity fields and/or point positions. This is useful for simulating sensor noise or for data augmentation.
-    *   `2_train_model.py`: The main script for training GNN models. It handles data loading, model initialization, the training loop (including periodic validation), metric logging, and checkpoint saving.
-    *   `3a_validate_knn.py`: Validates a trained model using k-Nearest Neighbors (k-NN) graphs.
-    *   `3b_validate_full_mesh.py`: Validates a trained model using graphs derived directly from the mesh's tetrahedral cell connectivity.
-    *   `4_validate_histograms.py`: Performs standalone Jensen-Shannon Divergence (JSD) histogram validation by comparing two sets of VTK data (e.g., ground truth vs. model predictions).
-    *   `5_combined_validation.py`: Orchestrates a full validation sequence, typically involving model inference (like `3a` or `3b`) followed by JSD histogram analysis.
-    *   `run_experiments.py`: (If present, or as a concept) Can be used to automate running multiple configurations or experiments.
+Now, let's look at the typical steps you'd follow when using these parts.
 
-*   **`src/cfd_gnn/`**: This is the core Python library containing all the reusable logic for the project.
-    *   `__init__.py`: Makes the directory a Python package.
-    *   `data_utils.py`: Handles data loading from VTK files, noise injection logic, graph construction (both k-NN and full mesh), and the `PairedFrameDataset` class used by PyTorch Geometric DataLoaders.
-    *   `losses.py`: Defines custom loss functions used during training, such as the supervised MSE loss, a physics-informed divergence loss, and a histogram-based loss component.
-    *   `metrics.py`: Implements various evaluation metrics, including Turbulent Kinetic Energy (TKE), Cosine Similarity, Jensen-Shannon Divergence (JSD) for velocity histograms, vorticity calculations, and new slice-based analysis functions.
-    *   `models.py`: Contains definitions of the Graph Neural Network architectures (e.g., `FlowNet`, `RotFlowNet/Gao`) and their building blocks like MLP layers and GNN steps.
-    *   `training.py`: Implements the core training loop (`train_single_epoch`) and the during-training validation logic (`validate_on_pairs`).
-    *   `utils.py`: Provides general helper functions for tasks like configuration loading, setting random seeds, initializing Weights & Biases, managing device (CPU/GPU) selection, and VTK I/O.
-    *   `validation.py`: Contains standalone validation utilities, particularly the pipeline for JSD histogram analysis.
+### Typical Workflow: From Data to Insights
 
-### Workflow Overview
+Using this project generally involves these stages:
 
-The typical workflow in this project can be summarized as follows:
-
-1.  **Data Preparation**:
-    *   Place your raw CFD datasets (series of VTK files per case) into a directory (e.g., `data/my_dataset_clean`).
-    *   (Optional) If training with noisy data, use `scripts/1_prepare_noisy_data.py` to generate a noisy version of your dataset (e.g., `outputs/noisy_data/my_dataset_noisy`). This script reads clean VTK files, injects configurable noise, and saves new noisy VTK files.
+1.  **Get Your Data Ready:**
+    *   Start with your CFD simulation results (usually VTK files).
+    *   If you want to test how the AI handles imperfect data, you can use a script (`scripts/1_prepare_noisy_data.py`) to add "noise" (random variations) to your clean data. This creates a new, noisy dataset.
         ```bash
-        python scripts/1_prepare_noisy_data.py --source-dir data/my_dataset_clean --output-dir outputs/noisy_data/my_dataset_noisy ...
+        # Example: Making a noisy copy of your data
+        python scripts/1_prepare_noisy_data.py --source-dir path/to/clean/data --output-dir path/to/noisy/data
         ```
 
-2.  **Configuration**:
-    *   Modify `config/default_config.yaml` or create a new YAML file (e.g., `config/my_experiment.yaml`) to set data paths, model parameters (like hidden dimensions, number of layers), training parameters (learning rate, batch size, epochs, loss weights, regularization), graph construction details (k for k-NN, downsampling), and W&B settings.
+2.  **Set Up Your Experiment (Configuration):**
+    *   Edit a configuration file (like `config/default_config.yaml` or your own copy) to tell the project:
+        *   Where to find your training and testing data.
+        *   What kind of AI model to build (e.g., its size, layers).
+        *   How to train it (e.g., learning speed, how many training cycles).
+        *   How data points should be connected (graph type: k-NN or full mesh).
+        *   Settings for logging your experiment (e.g., to Weights & Biases).
 
-3.  **Model Training**:
-    *   Run `scripts/2_train_model.py`, specifying your configuration, a run name, and the models to train.
+3.  **Train the AI Model:**
+    *   Run the main training script (`scripts/2_train_model.py`), pointing it to your configuration file and giving your experiment a unique name.
         ```bash
-        python scripts/2_train_model.py --config config/my_experiment.yaml --run-name my_training_run --models-to-train FlowNet ...
+        python scripts/2_train_model.py --config config/my_experiment_config.yaml --run-name my_first_ai_training
         ```
-    *   This script will:
-        *   Load the specified dataset (e.g., the noisy dataset prepared in step 1 for training, and a corresponding validation set).
-        *   Construct graph pairs using `PairedFrameDataset` from `data_utils.py`.
-        *   Initialize the specified GNN model(s) from `models.py`.
-        *   Run the training loop defined in `training.py`, using losses from `losses.py`.
-        *   Periodically evaluate the model on the validation set, calculating metrics from `metrics.py`.
-        *   Log all metrics, configuration, and (optionally) sample visualizations to Weights & Biases and local CSV files.
-        *   Save the best model checkpoint(s) to the `outputs/<run_name>/models/` directory.
+    *   What happens now?
+        *   The script loads your data.
+        *   It builds the AI model based on your settings.
+        *   It repeatedly feeds data to the model, letting it learn and adjust itself.
+        *   It regularly checks the model's performance on a separate test dataset.
+        *   It saves progress, logs results (e.g., to CSV files and Weights & Biases), and stores the best version of your trained model.
 
-4.  **Model Validation & Analysis**:
-    *   After training, use the saved model checkpoint(s) for more detailed validation.
-    *   **k-NN Graph Validation**:
+4.  **Test and Analyze Your Trained Model:**
+    *   Once training is done, you'll have a saved AI model. Now, you can test it more thoroughly.
+    *   There are scripts to run your model on test data and see its predictions (e.g., `3a_validate_knn.py`, `3b_validate_full_mesh.py`, or `5_combined_validation.py` for a full analysis including detailed comparisons).
         ```bash
-        python scripts/3a_validate_knn.py --model-checkpoint outputs/<run_name>/models/flownet_best.pth --model-name FlowNet ...
+        # Example: Testing a model using k-NN style graphs
+        python scripts/3a_validate_knn.py --model-checkpoint path/to/your/trained_model.pth --val-data-dir path/to/test/data ...
         ```
-    *   **Full Mesh Graph Validation**:
-        ```bash
-        python scripts/3b_validate_full_mesh.py --model-checkpoint outputs/<run_name>/models/flownet_best.pth --model-name FlowNet ...
-        ```
-    *   **Combined Validation (Inference + JSD)**:
-        ```bash
-        python scripts/5_combined_validation.py --model-checkpoint outputs/<run_name>/models/flownet_best.pth --model-name FlowNet ...
-        ```
-    *   These validation scripts will:
-        *   Load the specified validation dataset.
-        *   For each frame, construct the appropriate graph type.
-        *   Perform inference using the trained model.
-        *   Calculate a comprehensive set of metrics (overall, per-case, per-frame, and per-slice if enabled).
-        *   Save detailed metrics to CSV files (e.g., `frame_metrics_....csv`, `frame_slice_metrics_....csv`).
-        *   Save predicted VTK fields.
-        *   Log aggregated metrics and histograms to W&B.
+    *   These scripts will:
+        *   Load your test data and your trained model.
+        *   Make predictions using the model.
+        *   Calculate various scores (metrics) to see how accurate the predictions are.
+        *   Save the predictions (often as VTK files you can look at in visualization software) and detailed score reports.
 
-5.  **Results Review**:
-    *   Analyze the metrics logged to W&B dashboards.
-    *   Inspect the generated CSV files for detailed performance numbers.
-    *   Visualize the predicted VTK files in tools like ParaView to qualitatively assess model performance.
+5.  **Review Your Results:**
+    *   Look at the charts and numbers logged in Weights & Biases (if you used it).
+    *   Examine the score reports (CSV files) for detailed performance.
+    *   Open the predicted VTK files in a program like ParaView to visually compare the AI's output to the original simulations. This helps you understand *what* the AI learned.
 
-This modular structure allows for flexibility in experimentation and makes it easier to extend or modify specific parts of the pipeline.
+This step-by-step approach allows you to experiment with different settings, AI models, and data types, and to systematically evaluate the outcomes.
 
 ## Project Structure
 
@@ -524,173 +613,213 @@ This modular structure allows for flexibility in experimentation and makes it ea
 └── requirements.txt
 ```
 
-## Setup
+## Getting Started: Setting Up Your Environment
 
-1.  **Clone the Repository**:
-    ```bash
-    git clone <repository_url>
-    cd cfd-gnn-project # Or your chosen directory name
-    ```
+Ready to try it out? Here's how to get the project set up on your computer. If you're new to Python projects or command-line tools, take these steps one at a time.
 
-2.  **Create a Virtual Environment** (recommended):
-    ```bash
-    python -m venv venv
-    source venv/bin/activate  # On Linux/macOS
-    # venv\Scripts\activate   # On Windows
-    ```
+**Who is this for?** This project is useful if you have some experience with Python and are interested in machine learning, fluid dynamics, or scientific computing. You don't need to be an expert in GNNs or CFD to start exploring.
 
-3.  **Install Dependencies**:
-    ```bash
-    pip install -r requirements.txt
-    pip install pyvista pooch # For vorticity metrics and enhanced visualizations
-    ```
-    *Note: `torch`, `torch-scatter`, `torch-geometric` might require specific installation commands depending on your CUDA version. Refer to their official documentation if you encounter issues.*
+1.  **Copy the Project (Clone the Repository):**
+    *   First, you need a copy of the project files. If you have `git` installed, open your terminal or command prompt and run:
+        ```bash
+        git clone <repository_url>
+        cd cfd-gnn-project # Or the name you gave the folder
+        ```
+    *   (If you don't use git, you might download the project as a ZIP file and extract it.)
 
-4.  **Prepare Data**:
-    *   Place your CFD datasets (typically series of `.vtk` files) into the `data/` directory.
-    *   The expected structure for a dataset (e.g., "CFD_Ubend_other_val") is:
+2.  **Create a Clean Workspace (Virtual Environment - Recommended):**
+    *   To keep things tidy and avoid conflicts with other Python projects, it's best to create a "virtual environment." This is like a private sandbox for this project.
+        ```bash
+        python -m venv venv  # Creates a virtual environment named 'venv'
+        ```
+    *   Now, activate it:
+        *   On **Linux or macOS**: `source venv/bin/activate`
+        *   On **Windows**: `venv\Scripts\activate`
+    *   You should see `(venv)` appear at the beginning of your terminal prompt. This means you're "inside" the sandbox.
+
+3.  **Install the Tools (Dependencies):**
+    *   This project relies on several Python libraries. Install them all with:
+        ```bash
+        pip install -r requirements.txt
+        ```
+    *   **Important Note on PyTorch:** Some libraries, especially `torch`, `torch-scatter`, and `torch-geometric` (which are key for the AI parts), can be tricky. If the command above gives errors related to these, you might need to install them separately by following instructions from the [official PyTorch website](https://pytorch.org/get-started/locally/), making sure to choose versions compatible with your computer (e.g., if you have an NVIDIA GPU for CUDA). The `requirements.txt` file provides versions that are known to work together.
+
+4.  **Get Your Data Ready:**
+    *   The AI needs data to learn from. This project usually expects CFD simulation data stored as `.vtk` files.
+    *   You can place your data inside the `data/` folder, or anywhere else and tell the project where to find it using the configuration files (see "How the Project is Organized").
+    *   A typical way to organize data for a simulation case (e.g., "MyFlowSimulation") might look like this:
         ```
         data/
-        └── CFD_Ubend_other_val/
-            ├── sUbend_011/
+        └── MyFlowSimulation/
+            ├── SimulationCaseA/
             │   └── CFD/
-            │       ├── Frame_00_data.vtk
-            │       ├── Frame_01_data.vtk
+            │       ├── snapshot_00.vtk
+            │       ├── snapshot_01.vtk
             │       └── ...
-            └── sUbend_012/
+            └── SimulationCaseB/
                 └── CFD/
-                    ├── Frame_00_data.vtk
+                    ├── snapshot_00.vtk
                     └── ...
         ```
-    *   Update paths in `config/default_config.yaml` (e.g., `train_root`, `val_root`) or provide them via CLI arguments to scripts if your data is elsewhere.
+    *   You'll later specify paths like `data/MyFlowSimulation` in your configuration file (e.g., in `config/default_config.yaml` for `train_root` or `val_root`).
 
-5.  **Weights & Biases (Optional)**:
-    *   If you plan to use W&B logging, log in: `wandb login`
-    *   You can specify your W&B project and entity in `config/default_config.yaml` or let the scripts use defaults.
+5.  **Connect to Experiment Tracking (Weights & Biases - Optional but Recommended):**
+    *   This project can automatically log your experiments (settings, results, charts) to a free online service called [Weights & Biases (W&B)](https://wandb.ai/). This is super helpful for keeping track of what you've tried.
+    *   If you want to use it:
+        1.  Create a free W&B account on their website.
+        2.  Log in from your terminal:
+            ```bash
+            wandb login
+            ```
+            (It will ask for an API key, which you can find on your W&B profile page.)
+    *   You can tell the project which W&B "project" to send results to in your configuration file.
 
-## Configuration System
+With these steps done, you should be ready to run your first experiments!
 
-*   A `config/default_config.yaml` file provides default parameters for all aspects of the pipeline.
-*   You can create custom YAML configuration files (e.g., `my_experiment_config.yaml`) and pass them to scripts using the `--config path/to/your_config.yaml` argument.
-*   Command-line arguments provided directly to a script will override values from any loaded configuration file.
-*   The training script `2_train_model.py` supports a `--data-source [noisy|clean]` flag to select the input dataset type.
-*   To save detailed validation VTK fields (including error and vorticity), set `save_validation_fields_vtk: true` under `validation_during_training:` in your YAML config.
+## Understanding Configuration: Telling the Scripts What to Do
 
-## Usage Examples
+This project uses simple text files (in YAML format) to manage settings for your experiments. Think of them as control panels for the scripts.
 
-All scripts are run from the project root directory.
+*   **Central Hub (`config/` directory):** All configuration files live here.
+*   **The Default Settings (`config/default_config.yaml`):** This file contains standard settings for everything – from where your data is located, to how the AI model should be built, and how it should be trained. You can look at this file to see all the available options.
+*   **Your Own Custom Settings:**
+    *   It's a good idea to **copy `default_config.yaml`** and rename it (e.g., `my_experiment.yaml`) for your own experiments. This way, you can change settings without altering the original defaults.
+    *   When you run a script, you can tell it to use your custom file with the `--config` option, like this:
+        ```bash
+        python scripts/2_train_model.py --config config/my_experiment.yaml --run-name my_test
+        ```
+*   **Quick Changes (Command-Line Overrides):** Need to quickly change a setting for just one run? You can often do this directly in the command line when you run a script. These command-line options will temporarily override what's in your YAML file. For example:
+    ```bash
+    # This will use 'clean' data, even if your YAML says 'noisy'
+    python scripts/2_train_model.py --config config/my_experiment.yaml --data-source clean
+    ```
+*   **Specific Options:**
+    *   **Choosing Data Type:** The main training script (`2_train_model.py`) has a handy `--data-source` flag to quickly switch between using `clean` or `noisy` data.
+    *   **Saving Detailed Visuals:** If you want to save detailed visual outputs (VTK files) showing things like prediction errors or vorticity during training, you can turn this on in your YAML file. Look for `save_validation_fields_vtk: true` inside the `validation_during_training` section.
 
-**1. Prepare Noisy Data:**
-Creates a noisy version of a dataset.
-```bash
-python scripts/1_prepare_noisy_data.py \
-    --source-dir data/CFD_Ubend_other_val \
-    --output-dir outputs/noisy_data/CFD_Ubend_other_val_noisy \
-    --p-min 0.05 \
-    --p-max 0.15 \
-    --overwrite
-```
-*   `--source-dir`: Directory of original CFD cases.
-*   `--output-dir`: Where to save the noisy dataset.
-*   `--p-min`, `--p-max`: Noise percentage range.
-*   `--overwrite`: Overwrite output if it exists.
-*   (See script help `python scripts/1_prepare_noisy_data.py -h` for more options)
+By understanding and using these configuration files, you have fine-grained control over every aspect of your AI experiments.
 
-**2. Train a Model:**
-Trains FlowNet and/or Gao-RotFlowNet.
-```bash
-# Example: Training with noisy data (default)
-python scripts/2_train_model.py \
-    --config config/my_training_setup.yaml \
-    --run-name flownet_noisy_training \
-    --models-to-train FlowNet \
-    --epochs 150
+## Key Script Examples at a Glance
 
-# Example: Training with clean data
-python scripts/2_train_model.py \
-    --config config/my_training_setup.yaml \
-    --run-name flownet_clean_training \
-    --models-to-train FlowNet \
-    --epochs 150 \
-    --data-source clean
-```
-*   `--config`: Path to your training config (can be omitted to use only defaults + CLI).
-*   `--run-name`: Unique name for this training run; outputs will be in `outputs/<run_name>`.
-*   `--models-to-train`: Specify one or more models (FlowNet, Gao/RotFlowNet).
-*   `--data-source`: `noisy` (default) or `clean`.
-*   (See script help for more options like LR, batch size, etc.)
+Here's a quick look at the main scripts and what they do. For more detailed scenarios, see the "Quick Start: What Can You Do?" section. For a full list of options for any script, run it with the `-h` or `--help` flag (e.g., `python scripts/1_prepare_noisy_data.py -h`).
 
-**3. Validate Model with k-NN Graphs:**
-Validates a trained model checkpoint using k-NN graph representation.
-```bash
-python scripts/3a_validate_knn.py \
-    --model-checkpoint outputs/flownet_noisy_training/models/flownet_best.pth \
-    --model-name FlowNet \
-    --val-data-dir data/CFD_Ubend_other_val \
-    --output-dir outputs/flownet_noisy_training/validation_knn \
-    --k-neighbors 12 \
-    --no-downsample
-```
-*   `--model-checkpoint`: Path to the `.pth` file of the trained model.
-*   `--model-name`: Architecture name (FlowNet, Gao).
-*   `--val-data-dir`: Directory of validation cases.
-*   `--output-dir`: Where to save prediction VTKs and metrics summary.
+All commands should be run from the main project directory.
 
-**4. Validate Model with Full Mesh Graphs:**
-Validates a trained model using graphs derived from mesh cell connectivity.
-```bash
-python scripts/3b_validate_full_mesh.py \
-    --model-checkpoint outputs/flownet_noisy_training/models/flownet_best.pth \
-    --model-name FlowNet \
-    --val-data-dir data/CFD_Ubend_other_val \
-    --output-dir outputs/flownet_noisy_training/validation_fullmesh
-```
-*   (Similar arguments to 3a, but without k-NN specific ones.)
+**1. `1_prepare_noisy_data.py`: Create a Noisy Version of Your Data**
+   * Use this to simulate imperfections or sensor noise in your clean CFD data.
+   ```bash
+   python scripts/1_prepare_noisy_data.py --source-dir path/to/clean_data_cases --output-dir path/to/noisy_data_output --p-min 0.05 --p-max 0.15
+   ```
 
-**5. Perform Standalone JSD Histogram Validation:**
-Compares two existing sets of VTK data (e.g., ground truth vs. model predictions).
-```bash
-python scripts/4_validate_histograms.py \
-    --real-data-dir data/CFD_Ubend_other_val_noisy \
-    --pred-data-dir outputs/flownet_noisy_training/validation_knn/FlowNet \
-    --output-dir outputs/flownet_noisy_training/jsd_validation_knn \
-    --velocity-key-real U_noisy \
-    --velocity-key-pred velocity \
-    --model-name-prefix FlowNet_KNN_vs_NoisyReal
-```
-*   `--real-data-dir`: Reference dataset.
-*   `--pred-data-dir`: Predicted dataset (must have same case structure and frame count).
-*   `--output-dir`: For JSD heatmap VTKs.
-*   `--velocity-key-*`: VTK field names for velocity.
+**2. `2_train_model.py`: Train Your AI Model**
+   * This is the main script to train the GNN models (FlowNet, Gao/RotFlowNet).
+   ```bash
+   python scripts/2_train_model.py --config config/your_config.yaml --run-name my_training_run_01 --models-to-train FlowNet --epochs 100
+   ```
 
-**6. Run Combined Validation (Inference + JSD):**
-Orchestrates inference (like 3a or 3b) followed by JSD validation (like 4).
-```bash
-python scripts/5_combined_validation.py \
-    --model-checkpoint outputs/flownet_noisy_training/models/flownet_best.pth \
-    --model-name FlowNet \
-    --val-data-dir data/CFD_Ubend_other_val \
-    --output-dir outputs/flownet_noisy_training/combined_validation_knn_final \
-    --graph-type knn \
-    --k-neighbors 12
-```
-*   `--graph-type`: `knn` or `full_mesh` for the inference part.
-*   This script will create subdirectories within its `--output-dir` for predictions and JSD results.
+**3. `3a_validate_knn.py`: Test Model with k-NN Graphs**
+   * Evaluates your trained model using graphs where points connect to their 'k' nearest neighbors.
+   ```bash
+   python scripts/3a_validate_knn.py --model-checkpoint path/to/your_model.pth --model-name FlowNet --val-data-dir path/to/validation_cases --output-dir path/to/validation_results_knn
+   ```
 
-## Development Notes
+**4. `3b_validate_full_mesh.py`: Test Model with Full Mesh Graphs**
+   * Evaluates your trained model using graphs based on the original simulation mesh structure.
+   ```bash
+   python scripts/3b_validate_full_mesh.py --model-checkpoint path/to/your_model.pth --model-name FlowNet --val-data-dir path/to/validation_cases --output-dir path/to/validation_results_fullmesh
+   ```
 
-*   **Device Management**: Scripts attempt to use CUDA if available and specified ("auto" or "cuda" in config/CLI). CPU is used as a fallback or if specified.
-*   **VTK Keys**: Ensure the `velocity_key`, `pressure_key`, `noisy_velocity_key_suffix`, and `predicted_velocity_key` in your configuration match the fields in your VTK files and your desired output.
-*   **Error Handling**: Scripts include basic error handling, but complex data issues might require debugging.
-*   **Testing**: Consider adding unit tests to the `tests/` directory for core library functions.
+**5. `4_validate_histograms.py`: Compare Data Distributions (JSD)**
+   * Compares datasets (e.g., AI predictions vs. original data) by looking at how their data values are distributed.
+   ```bash
+   python scripts/4_validate_histograms.py --real-data-dir path/to/ground_truth_data --pred-data-dir path/to/model_prediction_data --output-dir path/to/histogram_results
+   ```
 
-## Future Enhancements (Ideas)
+**6. `5_combined_validation.py`: Full Validation (Inference + Analysis)**
+   * Runs a complete validation pipeline: makes predictions with your model and then performs detailed analysis (like histogram comparisons).
+   ```bash
+   python scripts/5_combined_validation.py --model-checkpoint path/to/your_model.pth --model-name FlowNet --val-data-dir path/to/validation_cases --output-dir path/to/combined_validation_output --graph-type knn
+   ```
 
-*   More sophisticated data augmentation techniques.
-*   Support for additional GNN architectures.
-*   Hyperparameter optimization scripts using W&B Sweeps.
-*   More detailed post-processing and visualization tools (e.g., velocity profile plots at key cross-sections, pressure drop calculations).
-*   Integration with workflow management tools (e.g., Snakemake, Nextflow).
+**7. `7_create_visualizations.py`: Plot Time-Series Probe Data**
+   * If you've extracted time-series data from points or slices (see "Time-Series Probing" section), this script creates interactive plots.
+   ```bash
+   python scripts/7_create_visualizations.py --points-csv path/to/probed_points.csv --output-dir path/to/visualizations/
+   ```
+
+## Advanced Feature: Detailed Data Probing & Time Analysis
+
+Beyond overall model performance, you might want to zoom in on specific areas of your simulation or track how values change over time at certain locations. This project includes tools for such detailed analysis.
+
+**What can you do with this?**
+
+*   **Track Data at Specific Points:** Pick any X,Y,Z coordinate in your simulation, and the tools will extract data (like velocity, pressure, etc.) from the nearest simulation point across all time steps.
+*   **Analyze Data on Slices:** Define a 2D plane (a slice) through your 3D simulation (e.g., "a vertical slice at X=0.5m"). The tools will gather data for all simulation points lying on or near this slice.
+*   **Calculate Physics Quantities:** For these points and slices, the system can also compute physics-based values like vorticity (local spinning motion) or velocity gradients.
+*   **Compare True vs. Predicted Over Time:** If you run this analysis on both your original simulation data and the AI's predictions, you can generate time-series plots to see exactly how well the AI matches reality at these specific locations.
+
+**How it Works:**
+
+1.  **Configuration is Key:**
+    *   **Defining Probes:** In your YAML configuration file (e.g., `config/default_config.yaml`), you'll find an `analysis_probes` section. Here you can list X,Y,Z coordinates for point probes, or define slices (e.g., by axis like "X", position like `0.05`, and thickness). Remember to set `enabled: true` for the probes you want to use.
+        ```yaml
+        # Example snippet from config/default_config.yaml
+        analysis_probes:
+          points:
+            enabled: true # Enable point probing
+            coordinates:
+              - [0.05, 0.01, 0.0] # Define a point
+              - [0.10, 0.02, 0.0] # Define another point
+            velocity_field_name: "velocity" # VTK field name for velocity
+          slices:
+            enabled: true # Enable slice probing
+            definitions:
+              - {axis: "X", position: 0.05, thickness: 0.005} # Define a slice
+            velocity_field_name: "velocity_on_slice" # Or appropriate field name
+        ```
+    *   **Time Extraction:** The system also needs to know how time is recorded in your VTK files. The `time_extraction` section in the YAML config lets you specify this (e.g., from a data field in the VTK, by parsing the filename, or by assuming a fixed time step).
+
+2.  **Generating Probe Data (using `scripts/5_combined_validation.py`):**
+    *   The same script you use for comprehensive model validation, `5_combined_validation.py`, also handles probe data generation.
+    *   Ensure your YAML config has `time_extraction` and `analysis_probes` set up correctly.
+    *   Run the script, pointing to your model, validation data, and config:
+        ```bash
+        python scripts/5_combined_validation.py --config path/to/your_config.yaml --model-checkpoint path/to/model.pth --val-data-dir path/to/validation_cases --output-dir path/to/output_run_dir
+        ```
+    *   **Output:** This creates CSV files (e.g., `probed_points_data_MODEL_GRAPH.csv`, `probed_slices_data_MODEL_GRAPH.csv`) in your run's output directory. These files contain the extracted data (true and predicted values, if applicable) and calculated quantities for each probe over time.
+
+3.  **Visualizing Probe Data (using `scripts/7_create_visualizations.py`):**
+    *   To see your time-series data plotted, use the `7_create_visualizations.py` script.
+    *   Point it to the CSV files generated in the previous step:
+        ```bash
+        python scripts/7_create_visualizations.py \
+            --points-csv path/to/output_run_dir/model_predictions/probed_points_data_MODEL_GRAPH.csv \
+            --slices-csv path/to/output_run_dir/model_predictions/probed_slices_data_MODEL_GRAPH.csv \
+            --output-dir path/to/save_visualizations/ \
+            --model-name "YourModelName"
+        ```
+    *   **Output:** This generates interactive HTML plots, making it easy to compare trends and values over time for each point or slice.
+
+**A Note on Dependencies:** These probing and visualization features use a few extra Python libraries (`scipy`, `plotly`, `kaleido`). They are included in the main `requirements.txt` file.
+
+## Notes for Developers & Advanced Users
+
+If you plan to modify the code or delve deeper:
+
+*   **GPU/CPU Usage:** The scripts automatically try to use a CUDA-enabled GPU if available and configured. You can specify this in the config or via command-line options; otherwise, it falls back to CPU.
+*   **VTK Data Fields:** When working with your own VTK files, make sure the names of data fields (like velocity, pressure) in your files match what's expected in the project's configuration (e.g., `velocity_key`, `pressure_key`).
+*   **Error Debugging:** While the scripts have some error checks, complex data or setup issues might need more detailed debugging.
+*   **Contributing Tests:** If you extend the core library (`src/cfd_gnn/`), please consider adding corresponding unit tests in the `tests/` folder.
+
+## Future Ideas & Contributions
+
+This project is a foundation. Here are some ways it could grow (contributions welcome!):
+
+*   **Smarter Data Handling:** Advanced data augmentation methods.
+*   **New AI Models:** Adding support for different types of Graph Neural Networks.
+*   **Automated Tuning:** Scripts for automatically finding the best AI model settings (e.g., using Weights & Biases Sweeps).
+*   **Richer Analysis:** More tools for in-depth result checking, like plotting velocity profiles or calculating pressure drops.
+*   **Workflow Integration:** Connecting with tools like Snakemake or Nextflow for managing complex series of jobs.
 
 ## Time-Series Probing and Analysis (New Features)
 
