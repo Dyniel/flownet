@@ -225,30 +225,34 @@ def vtk_to_knn_graph(
     vtk_path: str | Path,
     k_neighbors: int,
     downsample_n: int | None = None,
-    velocity_key: str = "U", # Key for velocity in point_data
-    noisy_velocity_key_suffix: str = "_noisy", # Suffix if using noisy data
-    use_noisy_data: bool = False, # If true, tries to use "U_noisy" (or similar)
-    # device: torch.device | str = "cpu", # Removed: tensors will be created on CPU
-    frame_idx: int = 0, # Frame index in sequence, for fixed_dt time calculation
-    time_extraction_config: dict | None = None # Config for time extraction
+    velocity_key: str = "U",
+    pressure_key: str = "p", # Key for pressure in point_data
+    noisy_velocity_key_suffix: str = "_noisy",
+    use_noisy_data: bool = False,
+    frame_idx: int = 0,
+    time_extraction_config: dict | None = None
 ) -> Data:
     """
     Loads a VTK file, optionally downsamples, builds a k-NN graph,
     and returns a PyTorch Geometric Data object with tensors on CPU.
+    Now also loads pressure if available.
 
     Args:
         vtk_path: Path to the VTK file.
         k_neighbors: Number of neighbors for k-NN.
         downsample_n: Number of points to downsample to. If None or 0, no downsampling.
         velocity_key: The base key for velocity data (e.g., "U").
+        pressure_key: The key for pressure data (e.g., "p").
         noisy_velocity_key_suffix: Suffix appended to velocity_key if use_noisy_data is True.
+                                   Note: Noise is not currently applied to pressure.
         use_noisy_data: If True, attempts to load noisy velocity (e.g., "U_noisy").
                         Falls back to base velocity_key if noisy key is not found.
         frame_idx: Frame index used for time calculation if 'fixed_dt' method is used.
         time_extraction_config: Configuration for time extraction logic.
 
     Returns:
-        PyTorch Geometric Data object with x, pos, edge_index, edge_attr on CPU.
+        PyTorch Geometric Data object with x (velocity), p (pressure, optional),
+        pos, edge_index, edge_attr on CPU.
     """
     mesh = meshio.read(str(vtk_path))
     points = mesh.points.astype(np.float32)
@@ -276,11 +280,26 @@ def vtk_to_knn_graph(
     if points.shape[0] != velocities.shape[0]:
         raise ValueError(f"Mismatch in number of points ({points.shape[0]}) and velocity entries ({velocities.shape[0]}) in {vtk_path}.")
 
+    # Load pressure data if key exists
+    pressures = None
+    if pressure_key in mesh.point_data:
+        pressures = mesh.point_data[pressure_key].astype(np.float32)
+        if points.shape[0] != pressures.shape[0]:
+            raise ValueError(f"Mismatch in number of points ({points.shape[0]}) and pressure entries ({pressures.shape[0]}) in {vtk_path}.")
+        if pressures.ndim == 2 and pressures.shape[1] == 1: # Ensure it's a 1D array if read as [N,1]
+            pressures = pressures.squeeze(-1)
+        elif pressures.ndim != 1:
+            raise ValueError(f"Pressure field '{pressure_key}' in {vtk_path} is not a scalar field (expected 1D or [N,1], got {pressures.ndim}D).")
+    else:
+        print(f"Warning: Pressure key '{pressure_key}' not found in {vtk_path}. Pressure data will not be loaded.")
+
     # Down-sampling
     if downsample_n and points.shape[0] > downsample_n:
         indices = np.linspace(0, points.shape[0] - 1, downsample_n, dtype=int, endpoint=True)
         points = points[indices]
         velocities = velocities[indices]
+        if pressures is not None:
+            pressures = pressures[indices]
 
     num_nodes = points.shape[0]
 
@@ -312,20 +331,29 @@ def vtk_to_knn_graph(
         relative_positions = np.empty((0, points.shape[1]), dtype=np.float32)
 
 
-    data = Data(
-        x=torch.from_numpy(velocities),
-        pos=torch.from_numpy(points),
-        edge_index=torch.from_numpy(edge_index_np),
-        edge_attr=torch.from_numpy(relative_positions),
-        path=str(vtk_path) # Store path for reference
-    )
+    data_dict = {
+        'x': torch.from_numpy(velocities),
+        'pos': torch.from_numpy(points),
+        'edge_index': torch.from_numpy(edge_index_np),
+        'edge_attr': torch.from_numpy(relative_positions),
+        'path': str(vtk_path)
+    }
+
+    if pressures is not None:
+        data_dict['p'] = torch.from_numpy(pressures)
+
+    data = Data(**data_dict)
 
     time_value = _extract_time_from_mesh(mesh, vtk_path, frame_idx,
                                          time_extraction_config or DEFAULT_TIME_EXTRACTION_CONFIG)
-    # Ensure time tensor is also on CPU
     data.time = torch.tensor([time_value], dtype=torch.float32)
 
-    print(f"DEBUG: Created k-NN graph from {vtk_path}: Nodes={data.num_nodes}, Edges={data.num_edges}")
+    debug_msg = f"DEBUG: Created k-NN graph from {vtk_path}: Nodes={data.num_nodes}, Edges={data.num_edges}"
+    if hasattr(data, 'p'):
+        debug_msg += f", Pressure_loaded_shape={data.p.shape}"
+    else:
+        debug_msg += ", Pressure_not_loaded"
+    print(debug_msg)
     return data
 
 def vtk_to_fullmesh_graph(
@@ -526,9 +554,9 @@ class PairedFrameDataset(Dataset):
                 k_neighbors=self.graph_config["k"],
                 downsample_n=self.graph_config.get("down_n"),
                 velocity_key=self.graph_config.get("velocity_key", "U"),
+                pressure_key=self.graph_config.get("pressure_key", "p"), # Added pressure_key
                 noisy_velocity_key_suffix=self.graph_config.get("noisy_velocity_key_suffix", "_noisy"),
                 use_noisy_data=self.use_noisy_data,
-                # device=self.device, # Removed
                 **common_args_t0
             )
             graph_t1 = vtk_to_knn_graph(
@@ -536,9 +564,9 @@ class PairedFrameDataset(Dataset):
                 k_neighbors=self.graph_config["k"],
                 downsample_n=self.graph_config.get("down_n"),
                 velocity_key=self.graph_config.get("velocity_key", "U"),
+                pressure_key=self.graph_config.get("pressure_key", "p"), # Added pressure_key
                 noisy_velocity_key_suffix=self.graph_config.get("noisy_velocity_key_suffix", "_noisy"),
                 use_noisy_data=self.use_noisy_data, # Target typically matches input noise status
-                # device=self.device, # Removed
                 **common_args_t1
             )
         elif self.graph_type == "full_mesh":
@@ -630,14 +658,17 @@ if __name__ == '__main__':
 
     # --- Setup for Original Tests (using the new time extraction features) ---
     points_np = np.array([[0,0,0], [1,0,0], [0,1,0], [1,1,0], [0,0,1]], dtype=np.float64)
-    velocity_np = np.random.rand(5, 3).astype(np.float32)
-    pressure_np = np.random.rand(5).astype(np.float32)
+    velocity_np = np.random.rand(points_np.shape[0], 3).astype(np.float32)
+    pressure_np_test = np.random.rand(points_np.shape[0]).astype(np.float32) # Ensure pressure matches num_points
     cells_dict = [meshio.CellBlock("tetra", np.array([[0,1,2,4]]))] if points_np.shape[0] >=4 else None
 
     # This mesh will be used for frame0 and frame1, time will be derived by fixed_dt via DEFAULT_TIME_EXTRACTION_CONFIG
     # as it has no specific time field_data or filename pattern matching default.
-    dummy_mesh_no_time_info = meshio.Mesh(points_np, cells_dict,
-                                          point_data={"U": velocity_np, "p": pressure_np})
+    # It now includes pressure data with key "Pressure_test"
+    dummy_mesh_no_time_info = meshio.Mesh(
+        points_np, cells_dict,
+        point_data={"U_test": velocity_np, "Pressure_test": pressure_np_test} # Using "U_test" and "Pressure_test"
+    )
 
     frame0_path = case1_cfd / "Frame_00_data.vtk"
     frame1_path = case1_cfd / "Frame_01_data.vtk"
@@ -653,55 +684,103 @@ if __name__ == '__main__':
     assert "U_noisy" in noisy_mesh_read.point_data, "U_noisy field missing."
     print("Noise injection test passed.")
 
-    # 2. Test k-NN Graph Conversion (with time)
-    print("\n--- Testing k-NN Graph Conversion (with time) ---")
-    graph_config_knn = {"k": 2, "down_n": None, "velocity_key": "U"}
-    if points_np.shape[0] <= graph_config_knn["k"]:
-        graph_config_knn["k"] = max(1, points_np.shape[0]-2 if points_np.shape[0]>1 else 0)
+    # 2. Test k-NN Graph Conversion (with time and pressure)
+    print("\n--- Testing k-NN Graph Conversion (with time and pressure) ---")
+    # Using "U_test" and "Pressure_test" as keys from dummy_mesh_no_time_info
+    graph_config_knn = {"k": 2, "down_n": None, "velocity_key": "U_test", "pressure_key": "Pressure_test"}
+    if points_np.shape[0] <= graph_config_knn["k"]: # Adjust k if too few points
+        new_k_val = max(1, points_np.shape[0]-2 if points_np.shape[0]>1 else 0)
+        graph_config_knn["k"] = new_k_val
+
 
     # Test frame0_path (should use fixed_dt, frame_idx=0, dt=0.01 -> time=0.0)
+    # And should load pressure "Pressure_test"
     knn_graph_f0 = vtk_to_knn_graph(
-        frame0_path, **graph_config_knn, use_noisy_data=False, device="cpu",
-        frame_idx=0, time_extraction_config=DEFAULT_TIME_EXTRACTION_CONFIG
+        vtk_path=frame0_path,
+        k_neighbors=graph_config_knn["k"],
+        downsample_n=graph_config_knn.get("down_n"),
+        velocity_key=graph_config_knn["velocity_key"],
+        pressure_key=graph_config_knn["pressure_key"],
+        use_noisy_data=False, # Not using noisy data for this part of test
+        frame_idx=0,
+        time_extraction_config=DEFAULT_TIME_EXTRACTION_CONFIG
     )
     print(f"k-NN graph (frame0_path): {knn_graph_f0}")
     assert hasattr(knn_graph_f0, 'time'), "k-NN graph missing 'time' attribute."
     assert np.isclose(knn_graph_f0.time.item(), 0.0), f"k-NN frame0 time mismatch: {knn_graph_f0.time.item()}"
+    assert hasattr(knn_graph_f0, 'p'), "k-NN graph missing 'p' (pressure) attribute."
+    assert knn_graph_f0.p.shape == (points_np.shape[0],), \
+        f"k-NN pressure shape mismatch. Expected ({points_np.shape[0]},), got {knn_graph_f0.p.shape}"
+    assert torch.allclose(knn_graph_f0.p, torch.from_numpy(pressure_np_test)), "k-NN pressure values mismatch."
 
-    # Test with frame_timefield_path (should use field_data, time=0.123)
+    # Test with frame_timefield_path (should use field_data for time, pressure might be missing or different)
+    # The dummy mesh for frame_timefield_path (mesh_with_time_field) only had "U", not "Pressure_test"
+    # So, for this one, pressure should not be loaded, and a warning should be printed.
+    print("\nTesting k-NN with mesh that might be missing pressure field 'Pressure_test':")
     knn_graph_tf = vtk_to_knn_graph(
-        frame_timefield_path, **graph_config_knn, use_noisy_data=False, device="cpu",
-        frame_idx=0, # frame_idx doesn't matter if field_data is found first
-        time_extraction_config=time_cfg_field_data_only # Use the config that prioritizes field_data
+        vtk_path=frame_timefield_path, # This mesh only had "U"
+        k_neighbors=graph_config_knn["k"],
+        downsample_n=graph_config_knn.get("down_n"),
+        velocity_key="U", # Velocity key in mesh_with_time_field is "U"
+        pressure_key=graph_config_knn["pressure_key"], # Still asking for "Pressure_test"
+        use_noisy_data=False,
+        frame_idx=0,
+        time_extraction_config=time_cfg_field_data_only
     )
-    print(f"k-NN graph (frame_timefield_path): {knn_graph_tf}")
+    print(f"k-NN graph (frame_timefield_path, pressure expected to be missing): {knn_graph_tf}")
     assert hasattr(knn_graph_tf, 'time'), "k-NN graph (tf) missing 'time' attribute."
     assert np.isclose(knn_graph_tf.time.item(), 0.123), f"k-NN field data time mismatch: {knn_graph_tf.time.item()}"
+    assert not hasattr(knn_graph_tf, 'p'), "k-NN graph (tf) should not have 'p' attribute as 'Pressure_test' was missing."
 
-    # Test noisy graph (should also get time, e.g. fixed_dt from default config)
-    # noisy_frame0_path is a copy of frame0_path but with noise.
+    # Test noisy graph (should also get time and pressure if original mesh had it)
+    # noisy_frame0_path is a copy of frame0_path which was created from dummy_mesh_no_time_info
+    # which has "U_test" and "Pressure_test". Noisy version will have "U_test_noisy".
+    # Pressure is not made noisy by current script, so "Pressure_test" should still be there.
+    graph_config_knn_noisy = {"k": graph_config_knn["k"], "down_n": None,
+                              "velocity_key": "U_test", "pressure_key": "Pressure_test",
+                              "noisy_velocity_key_suffix": "_noisy"} # Matches default
+
+    print("\nTesting k-NN with noisy velocity data (pressure should be from original non-noisy field):")
     noisy_knn_graph = vtk_to_knn_graph(
-        noisy_frame0_path, **graph_config_knn, use_noisy_data=True, device="cpu",
-        frame_idx=0, time_extraction_config=DEFAULT_TIME_EXTRACTION_CONFIG
+        vtk_path=noisy_frame0_path,
+        k_neighbors=graph_config_knn_noisy["k"],
+        downsample_n=graph_config_knn_noisy.get("down_n"),
+        velocity_key=graph_config_knn_noisy["velocity_key"], # "U_test"
+        pressure_key=graph_config_knn_noisy["pressure_key"], # "Pressure_test"
+        use_noisy_data=True, # This will make it try to load "U_test_noisy"
+        frame_idx=0,
+        time_extraction_config=DEFAULT_TIME_EXTRACTION_CONFIG
     )
     print(f"k-NN graph (noisy data): {noisy_knn_graph}")
     assert hasattr(noisy_knn_graph, 'time'), "Noisy k-NN graph missing 'time' attribute."
     assert np.isclose(noisy_knn_graph.time.item(), 0.0), f"Noisy k-NN time mismatch: {noisy_knn_graph.time.item()}"
-    print("k-NN graph conversion (with time) tests passed.")
+    assert hasattr(noisy_knn_graph, 'p'), "Noisy k-NN graph missing 'p' (pressure) attribute."
+    assert noisy_knn_graph.p.shape == (points_np.shape[0],), "Noisy k-NN pressure shape mismatch."
+    # Velocity 'x' should be noisy, pressure 'p' should be original non-noisy pressure_np_test
+    assert noisy_knn_graph.x.shape == (points_np.shape[0], 3), "Noisy k-NN velocity shape mismatch."
+    # We can't easily check if x is noisy without reading the noisy file's U_test_noisy field directly here.
+    # But we can check that pressure is still the original.
+    assert torch.allclose(noisy_knn_graph.p, torch.from_numpy(pressure_np_test)), "Noisy k-NN graph pressure values mismatch (should be original)."
+    print("k-NN graph conversion (with time and pressure) tests passed.")
 
-    # 3. Test Full Mesh Graph Conversion (with time, if cells were defined)
+
+    # 3. Test Full Mesh Graph Conversion (with time and pressure, if cells were defined)
     if cells_dict:
-        print("\n--- Testing Full Mesh Graph Conversion (with time) ---")
+        print("\n--- Testing Full Mesh Graph Conversion (with time and pressure) ---")
+        # dummy_mesh_no_time_info has "U_test" and "Pressure_test"
         full_mesh_graph_f0 = vtk_to_fullmesh_graph(
-            frame0_path, velocity_key="U", pressure_key="p", device="cpu",
+            frame0_path, velocity_key="U_test", pressure_key="Pressure_test",
             frame_idx=0, time_extraction_config=DEFAULT_TIME_EXTRACTION_CONFIG
         )
         print(f"Full mesh graph (frame0_path): {full_mesh_graph_f0}")
         assert hasattr(full_mesh_graph_f0, 'time'), "Full_mesh graph missing 'time' attribute."
         assert np.isclose(full_mesh_graph_f0.time.item(), 0.0), f"Full_mesh frame0 time mismatch: {full_mesh_graph_f0.time.item()}"
+        assert hasattr(full_mesh_graph_f0, 'p_norm'), "Full_mesh graph missing 'p_norm' attribute."
+        assert full_mesh_graph_f0.p_norm.shape == (points_np.shape[0],), "Full_mesh p_norm shape mismatch."
+
         if points_np.shape[0] >= 4: # Basic check from original test
-             assert full_mesh_graph_f0.edge_index.shape[1] >= 6*2
-        print("Full mesh graph conversion (with time) test passed.")
+             assert full_mesh_graph_f0.edge_index.shape[1] >= 6*2 # For a single tetrahedron
+        print("Full mesh graph conversion (with time and pressure) test passed.")
     else:
         print("\nSkipping Full Mesh Graph Conversion test (not enough points for tetra or no cells).")
 
@@ -713,8 +792,12 @@ if __name__ == '__main__':
     # Test PairedFrameDataset with default time extraction (fixed_dt via DEFAULT_TIME_EXTRACTION_CONFIG)
     # For pair idx 0: path_t0=frame0_path (frame_idx=0), path_t1=frame1_path (frame_idx=1)
     # Expected times: t0=0.0, t1=0.01 (using dt=0.01 from DEFAULT_TIME_EXTRACTION_CONFIG)
+    # graph_config_knn already contains velocity_key="U_test", pressure_key="Pressure_test"
     paired_ds_knn = PairedFrameDataset(
-        frame_pairs, graph_config_knn, graph_type="knn", device="cpu",
+        frame_pairs=frame_pairs,
+        graph_config=graph_config_knn, # This now includes pressure_key
+        graph_type="knn",
+        use_noisy_data=False, # Using original non-noisy data for this pair test
         time_extraction_config=None # Let it use its internal default copy
     )
     g0_knn, g1_knn = paired_ds_knn[0]
@@ -722,18 +805,27 @@ if __name__ == '__main__':
     assert hasattr(g0_knn, 'time') and hasattr(g1_knn, 'time'), "Paired k-NN graphs missing 'time'."
     assert np.isclose(g0_knn.time.item(), 0.0), "Paired k-NN G0 time incorrect."
     assert np.isclose(g1_knn.time.item(), 0.01), "Paired k-NN G1 time incorrect."
+    assert hasattr(g0_knn, 'p'), "Paired k-NN G0 missing 'p' (pressure)."
+    assert hasattr(g1_knn, 'p'), "Paired k-NN G1 missing 'p' (pressure)."
+    assert g0_knn.p.shape == (points_np.shape[0],), "Paired k-NN G0 pressure shape mismatch."
+    assert g1_knn.p.shape == (points_np.shape[0],), "Paired k-NN G1 pressure shape mismatch."
+    assert torch.allclose(g0_knn.p, torch.from_numpy(pressure_np_test)), "Paired k-NN G0 pressure values mismatch."
+
 
     if cells_dict:
-        graph_config_full = {"velocity_key": "U", "pressure_key": "p"}
+        # graph_config_full should also use the correct keys from dummy_mesh_no_time_info
+        graph_config_full = {"velocity_key": "U_test", "pressure_key": "Pressure_test"}
         paired_ds_full = PairedFrameDataset(
-            frame_pairs, graph_config_full, graph_type="full_mesh", device="cpu",
-            time_extraction_config=DEFAULT_TIME_EXTRACTION_CONFIG # Explicitly pass for test
+            frame_pairs, graph_config_full, graph_type="full_mesh",
+            time_extraction_config=DEFAULT_TIME_EXTRACTION_CONFIG
         )
         g0_full, g1_full = paired_ds_full[0]
         print(f"Paired full_mesh graphs: G0_time={g0_full.time.item()}, G1_time={g1_full.time.item()}")
         assert hasattr(g0_full, 'time') and hasattr(g1_full, 'time'), "Paired full_mesh graphs missing 'time'."
         assert np.isclose(g0_full.time.item(), 0.0), "Paired full_mesh G0 time incorrect."
         assert np.isclose(g1_full.time.item(), 0.01), "Paired full_mesh G1 time incorrect."
+        assert hasattr(g0_full, 'p_norm'), "Paired full_mesh G0 missing 'p_norm'."
+        assert hasattr(g1_full, 'p_norm'), "Paired full_mesh G1 missing 'p_norm'."
     print("Frame pairing and dataset (with time) tests passed.")
 
     # Clean up dummy files
