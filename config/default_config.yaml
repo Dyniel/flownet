@@ -88,27 +88,35 @@ graph_config:
 # Configuration for loss functions
 loss_config:
   weights:
-    supervised: 1.0        # Base weight for supervised loss (Ldata)
-    divergence: 1.0        # Weight for continuity (∇·u = 0) part of N-S (LPDE)
-    navier_stokes: 1.0     # Weight for momentum part of N-S (LPDE)
-    lbc: 1.0               # Base weight for LBC (boundary condition loss)
-    histogram: 0.01        # Optional: weight for histogram loss
-  histogram_bins: 64
-  # target_divergence: null # Default is 0
-  # target_boundary_velocity: 0.0 # Default for LBC (no-slip).
-  # boundary_nodes_mask_key: "boundary_mask" # Key if mask is in Data object (e.g. graph_t1.boundary_mask)
-                                          # This needs to be populated in your data loading if LBC is active.
+    supervised: 1.0
+    divergence: 0.1   # Continuity equation (∇·u = 0)
+    navier_stokes: 0.0 # Momentum equation. Set > 0 to enable.
+    lbc: 0.0           # Boundary condition loss. Set > 0 to enable.
+    histogram: 0.05
+  histogram_bins: 64 # Same as nbins above, but specific to loss calculation context
+  # target_divergence: null # or a specific tensor if needed. null implies 0.
+  # target_boundary_velocity: 0.0 # For LBC, default 0 (no-slip). Can be specific tensor.
+  # LBC specific:
+  # boundary_nodes_mask_key: "boundary_mask" # If mask is stored in Data object, this is the key.
 
   dynamic_loss_balancing:
-    enabled: true              # Enable dynamic loss balancing
-    lambda_smooth: 0.1         # Smoothing factor for alpha and beta updates
-    initial_alpha: 1.0         # Initial value for alpha (Ldata dynamic weight)
-    initial_beta: 1.0          # Initial value for beta (LBC dynamic weight)
-    epsilon_grad_norm: 1.0e-9  # Stability for grad norm division
+    enabled: false # Set to true to enable dynamic loss balancing
+    lambda_smooth: 0.1 # Smoothing factor for weight updates (paper uses 0.1)
+    initial_alpha: 1.0 # Initial weight for supervised loss (Ldata)
+    initial_beta: 1.0  # Initial weight for LBC loss
+    # LPDE (N-S momentum + continuity) is assumed to have a base weight of 1.0
+    # The 'divergence' and 'navier_stokes' weights in loss_config.weights will be
+    # overridden by dynamically calculated alpha for 'supervised' and beta for 'lbc'.
+    # The 'navier_stokes' weight will apply to the momentum part, and 'divergence' to continuity.
+    # Or, more aligned with paper L = LPDE + alpha*Ldata + beta*LBC:
+    # supervised_loss_key_for_alpha: "supervised" # Key in loss_weights to be replaced by alpha
+    # lbc_loss_key_for_beta: "lbc"                # Key in loss_weights to be replaced by beta
+    epsilon_grad_norm: 1.0e-9 # For numerical stability when dividing by grad norms
 
 # Physics parameters
 physics:
-  reynolds_number: 100.0     # CRITICAL: Set appropriately for your specific case and data scaling.
+  reynolds_number: 100.0 # Example Reynolds number, adjust as needed for your specific case.
+                         # Required if loss_config.weights.navier_stokes > 0.
 
 # Configuration for on-the-fly validation during training
 validation_during_training:

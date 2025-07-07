@@ -166,17 +166,18 @@ def wasserstein1_histogram_loss(
 
 
 def combined_loss(
-        model_output_t1: torch.Tensor,  # Model output at t1, shape [N, 4] (vel_x, vel_y, vel_z, pressure)
-        true_velocity_t1: torch.Tensor,  # Ground truth velocity at t1, shape [N, 3]
-        graph_t0: Data,  # Graph data at t0 (for N-S: u_true_t0, time_t0)
-        graph_t1: Data,  # Graph data at t1 (for N-S: time_t1, and spatial structure for derivatives)
-        loss_weights: dict,  # e.g., {"supervised": 1.0, "divergence": 0.1, "navier_stokes": 0.01, "lbc": 0.5}
-        reynolds_number: float | None = None,
-        histogram_bins: int = 64,
-        divergence_target: torch.Tensor | None = None,
-        # Boundary condition related arguments (optional)
-        boundary_nodes_mask: torch.Tensor | None = None,
-        target_boundary_velocity: torch.Tensor | float = 0.0
+    model_output_t1: torch.Tensor,      # Model output at t1, shape [N, 4] (vel_x, vel_y, vel_z, pressure)
+    true_velocity_t1: torch.Tensor,   # Ground truth velocity at t1, shape [N, 3]
+    graph_t0: Data,                   # Graph data at t0 (for N-S: u_true_t0, time_t0)
+    graph_t1: Data,                   # Graph data at t1 (for N-S: time_t1, and spatial structure for derivatives)
+    loss_weights: dict,               # e.g., {"supervised": 1.0, "divergence": 0.1, "navier_stokes": 0.01, "lbc": 0.5}
+    reynolds_number: float | None = None,
+    histogram_bins: int = 64,
+    divergence_target: torch.Tensor | None = None,
+    # Boundary condition related arguments (optional)
+    boundary_nodes_mask: torch.Tensor | None = None,
+    target_boundary_velocity: torch.Tensor | float = 0.0
+
 ) -> tuple[torch.Tensor, dict]:
     """
     Calculates a combined loss for training the GNN.
@@ -201,7 +202,8 @@ def combined_loss(
             - individual_losses: A dictionary of the individual loss components.
     """
     individual_losses = {}
-    predicted_velocity_t1 = model_output_t1[:, :3]  # First 3 components are velocity
+    predicted_velocity_t1 = model_output_t1[:, :3] # First 3 components are velocity
+
 
     # 1. Supervised Loss (MSE on velocity)
     true_velocity_t1_device = true_velocity_t1.to(predicted_velocity_t1.device)
@@ -216,7 +218,7 @@ def combined_loss(
     # This is calculated on the predicted velocity at t1.
     divergence_values_pred_t1 = calculate_divergence(predicted_velocity_t1, current_graph_structure)
     loss_divergence = (divergence_values_pred_t1 - (divergence_target or 0.0)).pow(2).mean()
-    individual_losses["divergence"] = loss_divergence  # This is effectively the continuity loss from N-S
+    individual_losses["divergence"] = loss_divergence # This is effectively the continuity loss from N-S
     individual_losses["divergence_values_pred_for_debug"] = divergence_values_pred_t1
 
     # 3. Histogram Loss (on the divergence of the prediction at t1)
@@ -255,8 +257,9 @@ def combined_loss(
 
         loss_lbc = boundary_condition_loss(
             predicted_velocity_t1,
-            actual_boundary_mask,  # Use the resolved mask
-            target_boundary_velocity,  # Passed directly
+            actual_boundary_mask, # Use the resolved mask
+            target_boundary_velocity, # Passed directly
+
             reduction='mean'
         )
         individual_losses["lbc"] = loss_lbc
@@ -268,25 +271,26 @@ def combined_loss(
     if loss_weights.get("supervised", 0.0) > 0:
         total_loss += loss_weights["supervised"] * loss_supervised
 
-    if loss_weights.get("divergence", 0.0) > 0:  # Continuity loss
+    if loss_weights.get("divergence", 0.0) > 0: # Continuity loss
+
         total_loss += loss_weights["divergence"] * loss_divergence
 
     if loss_weights.get("histogram", 0.0) > 0:
         total_loss += loss_weights["histogram"] * loss_histogram
 
-    if use_ns_loss:  # Momentum part of N-S
+    if use_ns_loss: # Momentum part of N-S
         total_loss += loss_weights["navier_stokes"] * individual_losses["navier_stokes_momentum"]
 
-    if use_lbc_loss:  # Boundary condition loss
+    if use_lbc_loss: # Boundary condition loss
         total_loss += loss_weights["lbc"] * individual_losses["lbc"]
 
     # Store weighted losses for logging if needed
     individual_losses["weighted_supervised"] = loss_weights.get("supervised", 0.0) * loss_supervised
     individual_losses["weighted_divergence"] = loss_weights.get("divergence", 0.0) * loss_divergence
     individual_losses["weighted_histogram"] = loss_weights.get("histogram", 0.0) * loss_histogram
-    individual_losses["weighted_navier_stokes_momentum"] = loss_weights.get("navier_stokes", 0.0) * individual_losses[
-        "navier_stokes_momentum"]
+    individual_losses["weighted_navier_stokes_momentum"] = loss_weights.get("navier_stokes", 0.0) * individual_losses["navier_stokes_momentum"]
     individual_losses["weighted_lbc"] = loss_weights.get("lbc", 0.0) * individual_losses["lbc"]
+
 
     return total_loss, individual_losses
 
@@ -296,23 +300,25 @@ def combined_loss(
 # --------------------------------------------------------------------- #
 
 def compute_temporal_derivative(
-        u_pred_t1: torch.Tensor,  # Predicted velocity at t1 [N, 3]
-        u_true_t0: torch.Tensor,  # True velocity at t0 [N, 3]
-        dt: torch.Tensor | float  # Time step
+    u_pred_t1: torch.Tensor, # Predicted velocity at t1 [N, 3]
+    u_true_t0: torch.Tensor, # True velocity at t0 [N, 3]
+    dt: torch.Tensor | float # Time step
+
 ) -> torch.Tensor:
     """Computes temporal derivative (u_pred_t1 - u_true_t0) / dt."""
     if isinstance(dt, torch.Tensor):
         dt = dt.to(u_pred_t1.device)
     # Ensure dt is not zero to avoid division errors
     if (isinstance(dt, float) and dt == 0.0) or \
-            (isinstance(dt, torch.Tensor) and torch.any(dt == 0.0)):
+       (isinstance(dt, torch.Tensor) and torch.any(dt == 0.0)):
         # Return zeros or raise error. For loss, zero contribution might be safer if this is rare.
         # However, dt=0 indicates a problem. For now, let's assume dt is valid.
         # If dt can be per-node and some are 0, that's an issue. Assume scalar dt or all non-zero.
-        if isinstance(dt, torch.Tensor) and dt.numel() == 1:  # Make sure scalar tensor dt is float
+        if isinstance(dt, torch.Tensor) and dt.numel() == 1: # Make sure scalar tensor dt is float
             dt_val = dt.item()
             if dt_val == 0.0:
-                raise ValueError("Time step dt is zero.")
+                 raise ValueError("Time step dt is zero.")
+
         elif isinstance(dt, float) and dt == 0.0:
             raise ValueError("Time step dt is zero.")
         # If dt is a tensor with multiple values, ensure all are non-zero
@@ -321,18 +327,19 @@ def compute_temporal_derivative(
     dudt = (u_pred_t1 - u_true_t0.to(u_pred_t1.device)) / dt
     return dudt
 
-
 # Placeholder for convective term (u · ∇)u
 def compute_convective_term(
-        velocity: torch.Tensor,  # Velocity field u, shape [N, 3]
-        graph_data: Data  # Graph structure (pos, edge_index, edge_attr)
+    velocity: torch.Tensor, # Velocity field u, shape [N, 3]
+    graph_data: Data       # Graph structure (pos, edge_index, edge_attr)
+
 ) -> torch.Tensor:
     """
     Computes the convective term (u · ∇)u for the Navier-Stokes equations.
     (u · ∇)u = u_j * ∂u_i / ∂x_j (summed over j, for each component i)
     Result is a vector of shape [N, 3].
     """
-    grad_u = compute_vector_gradient(velocity, graph_data)  # Shape [N, 3, 3]
+    grad_u = compute_vector_gradient(velocity, graph_data) # Shape [N, 3, 3]
+
 
     # Unsqueeze velocity to be [N, 1, 3] for batch matrix multiplication
     # u_expanded = velocity.unsqueeze(1)
@@ -360,8 +367,8 @@ def compute_convective_term(
 
 
 def compute_scalar_gradient(
-        scalar_field: torch.Tensor,  # Scalar field p [N]
-        graph_data: Data  # Graph structure (pos, edge_index, edge_attr)
+    scalar_field: torch.Tensor, # Scalar field p [N]
+    graph_data: Data           # Graph structure (pos, edge_index, edge_attr)
 ) -> torch.Tensor:
     """
     Computes gradient of a scalar field on the graph.
@@ -372,9 +379,10 @@ def compute_scalar_gradient(
     # edge_attr should be pos[dst] - pos[src]
     edge_attr = graph_data.edge_attr.to(scalar_field.device)
 
-    dist_sq = edge_attr.norm(dim=-1, p=2).pow(2).clamp(min=1e-12)  # Clamp for stability
+    dist_sq = edge_attr.norm(dim=-1, p=2).pow(2).clamp(min=1e-12) # Clamp for stability
 
-    row, col = edge_index  # row=src, col=dst
+    row, col = edge_index # row=src, col=dst
+
 
     # Scalar difference f_dst - f_src
     df_edges = scalar_field[col] - scalar_field[row]
@@ -403,18 +411,18 @@ def compute_scalar_gradient(
 
     return grad_field
 
-
 def compute_pressure_gradient(
-        pressure: torch.Tensor,  # Pressure field p [N]
-        graph_data: Data  # Graph structure (pos, edge_index, edge_attr)
+    pressure: torch.Tensor, # Pressure field p [N]
+    graph_data: Data      # Graph structure (pos, edge_index, edge_attr)
+
 ) -> torch.Tensor:
     """Computes pressure gradient ∇p using compute_scalar_gradient."""
     return compute_scalar_gradient(pressure, graph_data)
 
-
 def compute_vector_gradient(
-        vector_field: torch.Tensor,  # Vector field u [N, D_vec] (typically D_vec=3 for velocity)
-        graph_data: Data  # Graph structure
+    vector_field: torch.Tensor, # Vector field u [N, D_vec] (typically D_vec=3 for velocity)
+    graph_data: Data            # Graph structure
+
 ) -> torch.Tensor:
     """
     Computes the gradient of a vector field, ∇u.
@@ -422,8 +430,9 @@ def compute_vector_gradient(
     (∇u)_ij = ∂u_i / ∂x_j
     """
     num_nodes = vector_field.size(0)
-    num_vector_dims = vector_field.size(1)  # Should be 3 for velocity
-    num_spatial_dims = graph_data.pos.size(1)  # Should be 3 for 3D coordinates
+    num_vector_dims = vector_field.size(1) # Should be 3 for velocity
+    num_spatial_dims = graph_data.pos.size(1) # Should be 3 for 3D coordinates
+
 
     # Initialize gradient tensor: grad_u[node_idx, component_idx, spatial_dim_idx]
     grad_vector = torch.zeros(num_nodes, num_vector_dims, num_spatial_dims, device=vector_field.device)
@@ -431,7 +440,8 @@ def compute_vector_gradient(
     for i in range(num_vector_dims):
         # Compute gradient for the i-th component of the vector field
         scalar_component = vector_field[:, i]
-        grad_scalar_component = compute_scalar_gradient(scalar_component, graph_data)  # Result is [N, D_spatial]
+        grad_scalar_component = compute_scalar_gradient(scalar_component, graph_data) # Result is [N, D_spatial]
+
         grad_vector[:, i, :] = grad_scalar_component
 
     return grad_vector
@@ -439,8 +449,9 @@ def compute_vector_gradient(
 
 # Placeholder for Laplacian term ∇²u
 def compute_laplacian_term(
-        field: torch.Tensor,  # Scalar or Vector field u [N] or [N,D]
-        graph_data: Data  # Graph structure
+    field: torch.Tensor, # Scalar or Vector field u [N] or [N,D]
+    graph_data: Data      # Graph structure
+
 ) -> torch.Tensor:
     """
     Computes Laplacian of a field (scalar or vector) on the graph.
@@ -450,19 +461,20 @@ def compute_laplacian_term(
     num_nodes = field.size(0)
     edge_index = graph_data.edge_index
     pos = graph_data.pos.to(field.device)
-    edge_attr = graph_data.edge_attr.to(field.device)  # pos[dst] - pos[src]
+    edge_attr = graph_data.edge_attr.to(field.device) # pos[dst] - pos[src]
+
 
     dist_sq = edge_attr.norm(dim=-1, p=2).pow(2).clamp(min=1e-12)
     inv_dist_sq = 1.0 / dist_sq
 
-    row, col = edge_index  # row=src, col=dst
+    row, col = edge_index # row=src, col=dst
 
     # Difference: field_col - field_row (i.e. field_neighbor - field_node)
     # This is (f_j - f_i) for an edge (i,j)
-    field_diff = field[col] - field[row]  # Shape [num_edges, num_features] or [num_edges]
+    field_diff = field[col] - field[row] # Shape [num_edges, num_features] or [num_edges]
 
     # Weighted difference: (f_j - f_i) / ||dist||^2
-    weighted_diff = field_diff * inv_dist_sq.unsqueeze(-1)  # Works if field_diff is [E,D] or [E]
+    weighted_diff = field_diff * inv_dist_sq.unsqueeze(-1) # Works if field_diff is [E,D] or [E]
 
     # Sum these contributions at node `row` (i)
     laplacian_val = torch.zeros_like(field)
@@ -476,11 +488,12 @@ def compute_laplacian_term(
 
 
 def navier_stokes_loss(
-        predicted_output_t1: torch.Tensor,  # [N, 4] (vx, vy, vz, p) at t1
-        graph_t0: Data,  # Data object at t0 (contains true_vel_t0, pos, time)
-        graph_t1: Data,  # Data object at t1 (contains time, and pos if mesh moves)
-        reynolds_number: float,
-        reduction: str = 'mean'
+    predicted_output_t1: torch.Tensor, # [N, 4] (vx, vy, vz, p) at t1
+    graph_t0: Data,                    # Data object at t0 (contains true_vel_t0, pos, time)
+    graph_t1: Data,                    # Data object at t1 (contains time, and pos if mesh moves)
+    reynolds_number: float,
+    reduction: str = 'mean'
+
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """
     Calculates the Navier-Stokes equation residuals as a loss.
@@ -500,18 +513,19 @@ def navier_stokes_loss(
         A tuple: (total_ns_loss, momentum_loss_mean_sq, continuity_loss_mean_sq)
     """
     u_pred_t1 = predicted_output_t1[:, :3]
-    p_pred_t1 = predicted_output_t1[:, 3]  # Assuming pressure is the 4th component
+    p_pred_t1 = predicted_output_t1[:, 3] # Assuming pressure is the 4th component
 
-    u_true_t0 = graph_t0.x.to(u_pred_t1.device)  # Velocity at previous time step
+    u_true_t0 = graph_t0.x.to(u_pred_t1.device) # Velocity at previous time step
 
-    dt = graph_t1.time.item() - graph_t0.time.item()  # scalar
-    if dt <= 1e-9:  # Avoid division by zero or very small dt
+    dt = graph_t1.time.item() - graph_t0.time.item() # scalar
+    if dt <= 1e-9: # Avoid division by zero or very small dt
+
         # This might happen if t0 and t1 frames are identical or time is not progressing.
         # Return a zero loss or handle as an error. For now, zero loss contribution.
         print(f"Warning: dt is very small or zero ({dt}). Navier-Stokes loss might be unreliable.")
         # Fallback to a nominal dt to prevent NaN/inf, but this isn't ideal.
         # A better solution would be to ensure valid dt from data pipeline.
-        if dt == 0.0: dt = 1e-6  # Avoid direct zero division if absolutely necessary for code flow
+        if dt == 0.0: dt = 1e-6 # Avoid direct zero division if absolutely necessary for code flow
 
     # --- Calculate terms for Momentum Equation ---
     # 1. Temporal derivative: ∂u/∂t
@@ -521,7 +535,8 @@ def navier_stokes_loss(
     # Ensure graph_t1 has necessary attributes (pos, edge_index, edge_attr)
     # If graph_t0 and graph_t1 share structure, graph_t0 could be used too.
     # Assuming graph_t1.pos, graph_t1.edge_index etc. are what we need for derivatives at t1.
-    current_graph_structure = graph_t1  # Or graph_t0 if structure is static
+    current_graph_structure = graph_t1 # Or graph_t0 if structure is static
+
 
     # 2. Convective term: (u·∇)u based on u_pred_t1
     conv_term = compute_convective_term(u_pred_t1, current_graph_structure)
@@ -539,11 +554,12 @@ def navier_stokes_loss(
 
     # --- Calculate term for Continuity Equation ---
     # ∇·u based on u_pred_t1
-    div_u = calculate_divergence(u_pred_t1, current_graph_structure)  # div_u is [N]
+    div_u = calculate_divergence(u_pred_t1, current_graph_structure) # div_u is [N]
 
     # --- Calculate losses (typically mean squared error of residuals) ---
-    momentum_loss = momentum_residual.pow(2).sum(dim=1)  # Sum over 3 components, then mean over N
-    continuity_loss = div_u.pow(2)  # Already [N]
+    momentum_loss = momentum_residual.pow(2).sum(dim=1) # Sum over 3 components, then mean over N
+    continuity_loss = div_u.pow(2) # Already [N]
+
 
     if reduction == 'mean':
         final_momentum_loss = momentum_loss.mean()
@@ -564,11 +580,11 @@ def navier_stokes_loss(
 # --------------------------------------------------------------------- #
 
 def boundary_condition_loss(
-        predicted_velocity_t1: torch.Tensor,  # Predicted velocity at t1 [N, 3]
-        boundary_nodes_mask: torch.Tensor | None,  # Boolean tensor [N], True for boundary nodes
-        target_boundary_velocity: torch.Tensor | float = 0.0,
-        # Target velocity for boundary nodes [N_boundary, 3] or scalar
-        reduction: str = 'mean'
+    predicted_velocity_t1: torch.Tensor, # Predicted velocity at t1 [N, 3]
+    boundary_nodes_mask: torch.Tensor | None, # Boolean tensor [N], True for boundary nodes
+    target_boundary_velocity: torch.Tensor | float = 0.0, # Target velocity for boundary nodes [N_boundary, 3] or scalar
+    reduction: str = 'mean'
+
 ) -> torch.Tensor:
     """
     Calculates a loss based on boundary conditions for velocity.
@@ -590,7 +606,8 @@ def boundary_condition_loss(
 
     pred_boundary_vel = predicted_velocity_t1[boundary_nodes_mask]
 
-    if pred_boundary_vel.numel() == 0:  # No boundary nodes selected by mask actually existed
+    if pred_boundary_vel.numel() == 0: # No boundary nodes selected by mask actually existed
+
         return torch.tensor(0.0, device=predicted_velocity_t1.device)
 
     if isinstance(target_boundary_velocity, float):
@@ -607,18 +624,22 @@ def boundary_condition_loss(
             # Current assumption: if tensor, it's already correctly filtered and shaped.
             # This might need adjustment based on how boundary_nodes_mask and target_boundary_velocity are supplied.
             # For now, let's assume it's either a scalar or a correctly pre-filtered tensor matching pred_boundary_vel.
-            raise ValueError(
+             raise ValueError(
+
                 f"Shape mismatch for target_boundary_velocity. Expected {pred_boundary_vel.shape}, got {target_vel.shape}."
                 " If providing a tensor, ensure it corresponds to the nodes selected by boundary_nodes_mask."
             )
 
-    loss = F.mse_loss(pred_boundary_vel, target_vel, reduction='none').sum(dim=-1)  # Sum MSE over velocity components
+
+    loss = F.mse_loss(pred_boundary_vel, target_vel, reduction='none').sum(dim=-1) # Sum MSE over velocity components
+
 
     if reduction == 'mean':
         return loss.mean()
     elif reduction == 'sum':
         return loss.sum()
-    else:  # Should not happen if we stick to 'mean' or 'sum'
+    else: # Should not happen if we stick to 'mean' or 'sum'
+
         raise ValueError(f"Unknown reduction type for LBC: {reduction}")
 
 
@@ -705,18 +726,16 @@ if __name__ == '__main__':
 
     # Graph data for t0
     u_true_t0_ns = torch.randn(num_nodes_ns, 3, device=device)
-    pos_t0_ns = torch.rand(num_nodes_ns, 3, device=device) * 0.1  # Small domain for t0
-    edge_index_t0_ns = torch.randint(0, num_nodes_ns, (2, num_nodes_ns * 3), device=device)  # Dummy edges
+    pos_t0_ns = torch.rand(num_nodes_ns, 3, device=device) * 0.1 # Small domain for t0
+    edge_index_t0_ns = torch.randint(0, num_nodes_ns, (2, num_nodes_ns * 3), device=device) # Dummy edges
     edge_attr_t0_ns = pos_t0_ns[edge_index_t0_ns[1]] - pos_t0_ns[edge_index_t0_ns[0]]
-    graph_t0_ns = Data(x=u_true_t0_ns, pos=pos_t0_ns, edge_index=edge_index_t0_ns, edge_attr=edge_attr_t0_ns,
-                       time=torch.tensor([0.0], device=device))
+    graph_t0_ns = Data(x=u_true_t0_ns, pos=pos_t0_ns, edge_index=edge_index_t0_ns, edge_attr=edge_attr_t0_ns, time=torch.tensor([0.0], device=device))
 
     # Graph data for t1 (spatial structure for derivatives at t1)
-    pos_t1_ns = pos_t0_ns + torch.rand(num_nodes_ns, 3, device=device) * 0.01  # Slightly moved mesh
-    edge_index_t1_ns = edge_index_t0_ns  # Assume same connectivity for simplicity
+    pos_t1_ns = pos_t0_ns + torch.rand(num_nodes_ns, 3, device=device) * 0.01 # Slightly moved mesh
+    edge_index_t1_ns = edge_index_t0_ns # Assume same connectivity for simplicity
     edge_attr_t1_ns = pos_t1_ns[edge_index_t1_ns[1]] - pos_t1_ns[edge_index_t1_ns[0]]
-    graph_t1_ns = Data(pos=pos_t1_ns, edge_index=edge_index_t1_ns, edge_attr=edge_attr_t1_ns,
-                       time=torch.tensor([0.01], device=device))
+    graph_t1_ns = Data(pos=pos_t1_ns, edge_index=edge_index_t1_ns, edge_attr=edge_attr_t1_ns, time=torch.tensor([0.01], device=device))
 
     re_ns = 100.0
 
@@ -748,9 +767,10 @@ if __name__ == '__main__':
     print("\nTesting combined_loss with Navier-Stokes...")
     loss_weights_ns = {
         "supervised": 1.0,
-        "divergence": 1.0,  # Continuity from N-S
-        "navier_stokes": 1.0,  # Momentum from N-S
-        "histogram": 0.0  # Off for this test
+        "divergence": 1.0, # Continuity from N-S
+        "navier_stokes": 1.0, # Momentum from N-S
+        "histogram": 0.0 # Off for this test
+
     }
     # For combined_loss, true_velocity_t1 is needed for supervised loss
     true_vel_t1_ns = torch.randn(num_nodes_ns, 3, device=device)
@@ -773,7 +793,8 @@ if __name__ == '__main__':
         print(f"  {k}: {v_tensor.item() if isinstance(v_tensor, torch.Tensor) else v_tensor}")
 
     assert "navier_stokes_momentum" in individual_losses_ns
-    assert "divergence" in individual_losses_ns  # Continuity
+    assert "divergence" in individual_losses_ns # Continuity
+
 
     try:
         total_loss_combined_ns.backward()
@@ -800,7 +821,7 @@ if __name__ == '__main__':
     assert torch.isclose(lbc_all_false, torch.tensor(0.0))
 
     # Test 3: Mask selects some nodes, target is scalar 0.0 (no-slip)
-    mask_some_true = torch.tensor([True, False, True] + [False] * (num_nodes_bc - 3), dtype=torch.bool, device=device)
+    mask_some_true = torch.tensor([True, False, True] + [False]*(num_nodes_bc-3), dtype=torch.bool, device=device)
     num_boundary_nodes = mask_some_true.sum().item()
 
     lbc_some_scalar_target = boundary_condition_loss(pred_vel_bc, mask_some_true, 0.0, reduction='mean')
@@ -809,8 +830,8 @@ if __name__ == '__main__':
     # F.mse_loss default is mean over all elements. So, need to be careful with direct comparison.
     # Manual calculation for this specific case:
     expected_manual_lbc = (pred_vel_bc[mask_some_true].pow(2).sum(dim=-1)).mean().item()
-    print(
-        f"LBC some nodes, scalar target 0.0: {lbc_some_scalar_target.item()} (Expected approx: {expected_manual_lbc})")
+    print(f"LBC some nodes, scalar target 0.0: {lbc_some_scalar_target.item()} (Expected approx: {expected_manual_lbc})")
+
     assert torch.isclose(lbc_some_scalar_target, torch.tensor(expected_manual_lbc, device=device))
 
     # Test 4: Mask selects some nodes, target is a tensor
@@ -827,16 +848,14 @@ if __name__ == '__main__':
     # Let's make target_boundary_velocity have the same shape as pred_vel_bc[mask_some_true]
 
     lbc_tensor_target = boundary_condition_loss(pred_vel_bc, mask_some_true, target_vel_bc_tensor, reduction='sum')
-    expected_lbc_tensor_sum = F.mse_loss(pred_vel_bc[mask_some_true], target_vel_bc_tensor,
-                                         reduction='none').sum().item()
+    expected_lbc_tensor_sum = F.mse_loss(pred_vel_bc[mask_some_true], target_vel_bc_tensor, reduction='none').sum().item()
     # sum(dim=-1).sum() for our LBC's sum reduction
-    expected_manual_lbc_tensor_sum = (
-        (pred_vel_bc[mask_some_true] - target_vel_bc_tensor).pow(2).sum(dim=-1)).sum().item()
-    print(
-        f"LBC some nodes, tensor target (sum): {lbc_tensor_target.item()} (Expected approx: {expected_manual_lbc_tensor_sum})")
+    expected_manual_lbc_tensor_sum = ( (pred_vel_bc[mask_some_true] - target_vel_bc_tensor).pow(2).sum(dim=-1) ).sum().item()
+    print(f"LBC some nodes, tensor target (sum): {lbc_tensor_target.item()} (Expected approx: {expected_manual_lbc_tensor_sum})")
     assert torch.isclose(lbc_tensor_target, torch.tensor(expected_manual_lbc_tensor_sum, device=device))
 
-    lbc_tensor_target.backward()  # Test backward pass
+    lbc_tensor_target.backward() # Test backward pass
+
     print("LBC backward pass successful.")
     assert pred_vel_bc.grad is not None
 
@@ -856,8 +875,9 @@ if __name__ == '__main__':
     # Create a boundary mask for graph_t1_ns (which has num_nodes_ns nodes)
     bc_mask_combined = torch.zeros(num_nodes_ns, dtype=torch.bool, device=device)
     if num_nodes_ns >= 2:
-        bc_mask_combined[0] = True
-        bc_mask_combined[-1] = True
+      bc_mask_combined[0] = True
+      bc_mask_combined[-1] = True
+
 
     # Target for these boundary nodes (scalar 0.0 for no-slip)
     target_bc_vel_combined = 0.0
@@ -867,12 +887,13 @@ if __name__ == '__main__':
         pred_output_t1_ns.grad.zero_()
 
     total_loss_combined_lbc, individual_losses_lbc = combined_loss(
-        model_output_t1=pred_output_t1_ns,  # Shape [num_nodes_ns, 4]
-        true_velocity_t1=true_vel_t1_ns,  # Shape [num_nodes_ns, 3]
+        model_output_t1=pred_output_t1_ns, # Shape [num_nodes_ns, 4]
+        true_velocity_t1=true_vel_t1_ns,   # Shape [num_nodes_ns, 3]
         graph_t0=graph_t0_ns,
-        graph_t1=graph_t1_ns,  # Can store boundary_mask here if needed, or pass separately
+        graph_t1=graph_t1_ns, # Can store boundary_mask here if needed, or pass separately
         loss_weights=loss_weights_lbc,
-        reynolds_number=re_ns,  # Not used if navier_stokes weight is 0
+        reynolds_number=re_ns, # Not used if navier_stokes weight is 0
+
         boundary_nodes_mask=bc_mask_combined,
         target_boundary_velocity=target_bc_vel_combined
     )

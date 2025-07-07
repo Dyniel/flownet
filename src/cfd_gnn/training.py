@@ -222,7 +222,8 @@ def train_single_epoch(
         train_loader: DataLoader,
         optimizer: Optimizer,
         loss_weights: dict,
-        reynolds_number: float | None,  # Added Reynolds number
+        reynolds_number: float | None, # Added Reynolds number
+
         histogram_bins: int,
         device: torch.device,
         clip_grad_norm_value: float | None = 1.0,
@@ -231,7 +232,8 @@ def train_single_epoch(
         # For LBC, if needed directly in train_single_epoch
         # These would typically come from graph_t1 or be globally configured per dataset
         # For now, assuming they might be part of graph_t1 or passed if train_loader yields them
-        dynamic_balancing_cfg: dict | None = None  # Config for dynamic loss balancing
+        dynamic_balancing_cfg: dict | None = None # Config for dynamic loss balancing
+
 ) -> dict:
     """
     Trains the model for a single epoch.
@@ -255,7 +257,7 @@ def train_single_epoch(
     epoch_losses_aggregated = {
         "total": 0.0, "supervised": 0.0, "divergence": 0.0,
         "navier_stokes_momentum": 0.0, "lbc": 0.0, "histogram": 0.0,
-        "regularization": 0.0, "alpha": 0.0, "beta": 0.0  # For logging dynamic weights
+        "regularization": 0.0, "alpha": 0.0, "beta": 0.0 # For logging dynamic weights
     }
     num_batches = 0
 
@@ -266,8 +268,8 @@ def train_single_epoch(
         current_alpha = dynamic_balancing_cfg.get("initial_alpha", 1.0)
         current_beta = dynamic_balancing_cfg.get("initial_beta", 1.0)
         epsilon_grad_norm = dynamic_balancing_cfg.get("epsilon_grad_norm", 1e-9)
-        print(
-            f"DEBUG: Dynamic Loss Balancing ENABLED. Initial alpha={current_alpha}, beta={current_beta}, lambda={lambda_smooth}")
+        print(f"DEBUG: Dynamic Loss Balancing ENABLED. Initial alpha={current_alpha}, beta={current_beta}, lambda={lambda_smooth}")
+
     else:
         print("DEBUG: Dynamic Loss Balancing DISABLED.")
 
@@ -283,57 +285,56 @@ def train_single_epoch(
 
         # PDE losses (L_PDE = L_momentum + L_continuity)
         loss_pde_total, loss_pde_mom, loss_pde_cont = torch.tensor(0.0), torch.tensor(0.0), torch.tensor(0.0)
-        if loss_weights.get("navier_stokes", 0.0) > 0.0 or loss_weights.get("divergence",
-                                                                            0.0) > 0.0:  # If any PDE component is active
-            if reynolds_number is None and loss_weights.get("navier_stokes", 0.0) > 0.0:
-                raise ValueError("Reynolds number must be provided for Navier-Stokes loss.")
+        if loss_weights.get("navier_stokes", 0.0) > 0.0 or loss_weights.get("divergence", 0.0) > 0.0 : # If any PDE component is active
+            if reynolds_number is None and loss_weights.get("navier_stokes",0.0) > 0.0:
+                 raise ValueError("Reynolds number must be provided for Navier-Stokes loss.")
             # navier_stokes_loss returns (total_ns_loss, momentum_loss, continuity_loss)
             # We need them unreduced (per node) if we want to apply custom reduction later,
             # but for grad norm calculation, scalar loss value is fine.
-            _, loss_pde_mom, loss_pde_cont = navier_stokes_loss(  # Removed losses. prefix
+            _, loss_pde_mom, loss_pde_cont = navier_stokes_loss( # Removed losses. prefix
+
                 model_output_t1, graph_t0, graph_t1, reynolds_number if reynolds_number is not None else 1.0,
                 reduction='mean'
             )
         # L_PDE is the sum of momentum and continuity residuals (squared and meaned)
-        L_PDE = loss_pde_mom + loss_pde_cont  # These are already mean squared residuals
+        L_PDE = loss_pde_mom + loss_pde_cont # These are already mean squared residuals
+
 
         # Boundary condition loss (L_bc)
         loss_lbc = torch.tensor(0.0, device=device)
         if loss_weights.get("lbc", 0.0) > 0.0:
-            loss_lbc = boundary_condition_loss(  # Removed losses. prefix
-                model_output_t1[:, :3], boundary_mask_t1, 0.0, reduction='mean'
+            loss_lbc = boundary_condition_loss( # Removed losses. prefix
+                model_output_t1[:,:3], boundary_mask_t1, 0.0, reduction='mean'
             )
 
         # --- Dynamic Loss Balancing (if enabled) ---
-        current_loss_weights = loss_weights.copy()  # Start with base weights from config
+        current_loss_weights = loss_weights.copy() # Start with base weights from config
+
         if dlb_enabled:
             model_params = list(model.parameters())
 
             # Grad norm for L_PDE
             optimizer.zero_grad()
             L_PDE.backward(retain_graph=True)
-            grad_norm_L_PDE = torch.norm(
-                torch.stack([torch.norm(p.grad.detach(), 2) for p in model_params if p.grad is not None]), 2)
+            grad_norm_L_PDE = torch.norm(torch.stack([torch.norm(p.grad.detach(), 2) for p in model_params if p.grad is not None]), 2)
 
             # Grad norm for L_sup (L_data)
             optimizer.zero_grad()
             loss_sup.backward(retain_graph=True)
-            grad_norm_L_sup = torch.norm(
-                torch.stack([torch.norm(p.grad.detach(), 2) for p in model_params if p.grad is not None]), 2)
+            grad_norm_L_sup = torch.norm(torch.stack([torch.norm(p.grad.detach(), 2) for p in model_params if p.grad is not None]), 2)
 
             # Grad norm for L_bc
-            grad_norm_L_bc = torch.tensor(0.0, device=device)  # Default if LBC not active for balancing
-            if loss_weights.get("lbc", 0.0) > 0.0 and loss_lbc > 0:  # Only if LBC is meaningful
+            grad_norm_L_bc = torch.tensor(0.0, device=device) # Default if LBC not active for balancing
+            if loss_weights.get("lbc", 0.0) > 0.0 and loss_lbc > 0: # Only if LBC is meaningful
                 optimizer.zero_grad()
-                loss_lbc.backward(
-                    retain_graph=True)  # retain_graph might not be needed for last one if not reusing grads
-                grad_norm_L_bc = torch.norm(
-                    torch.stack([torch.norm(p.grad.detach(), 2) for p in model_params if p.grad is not None]), 2)
+                loss_lbc.backward(retain_graph=True) # retain_graph might not be needed for last one if not reusing grads
+                grad_norm_L_bc = torch.norm(torch.stack([torch.norm(p.grad.detach(), 2) for p in model_params if p.grad is not None]), 2)
 
             alpha_hat = grad_norm_L_PDE / (grad_norm_L_sup + epsilon_grad_norm)
-            beta_hat = torch.tensor(1.0, device=device)  # Default beta_hat if LBC is not active for balancing
-            if grad_norm_L_bc > epsilon_grad_norm:  # Avoid division by zero if LBC grad is tiny/zero
-                beta_hat = grad_norm_L_PDE / (grad_norm_L_bc + epsilon_grad_norm)
+            beta_hat = torch.tensor(1.0, device=device) # Default beta_hat if LBC is not active for balancing
+            if grad_norm_L_bc > epsilon_grad_norm : # Avoid division by zero if LBC grad is tiny/zero
+                 beta_hat = grad_norm_L_PDE / (grad_norm_L_bc + epsilon_grad_norm)
+
 
             current_alpha = (1 - lambda_smooth) * current_alpha + lambda_smooth * alpha_hat.item()
             current_beta = (1 - lambda_smooth) * current_beta + lambda_smooth * beta_hat.item()
@@ -352,15 +353,14 @@ def train_single_epoch(
             # Let's adjust to match L = LPDE + alpha*Ldata + beta*LBC:
             # This means we construct the total loss manually here if balancing is on.
 
-            epoch_losses_aggregated["alpha"] += current_alpha  # Log alpha
-            epoch_losses_aggregated["beta"] += current_beta  # Log beta
-            print(
-                f"DEBUG DLB: Batch {num_batches}, PDE_grad={grad_norm_L_PDE:.2e}, Sup_grad={grad_norm_L_sup:.2e}, LBC_grad={grad_norm_L_bc:.2e}")
-            print(
-                f"DEBUG DLB: alpha_hat={alpha_hat:.2f}, beta_hat={beta_hat:.2f} -> current_alpha={current_alpha:.2f}, current_beta={current_beta:.2f}")
+            epoch_losses_aggregated["alpha"] += current_alpha # Log alpha
+            epoch_losses_aggregated["beta"] += current_beta   # Log beta
+            print(f"DEBUG DLB: Batch {num_batches}, PDE_grad={grad_norm_L_PDE:.2e}, Sup_grad={grad_norm_L_sup:.2e}, LBC_grad={grad_norm_L_bc:.2e}")
+            print(f"DEBUG DLB: alpha_hat={alpha_hat:.2f}, beta_hat={beta_hat:.2f} -> current_alpha={current_alpha:.2f}, current_beta={current_beta:.2f}")
+
 
         # --- Calculate total loss for optimization ---
-        optimizer.zero_grad()  # Clear grads from any individual .backward() calls if not using autograd.grad
+        optimizer.zero_grad() # Clear grads from any individual .backward() calls if not using autograd.grad
 
         if dlb_enabled:
             # Manual construction of total loss based on L = LPDE + alpha*Ldata + beta*LBC
@@ -371,8 +371,9 @@ def train_single_epoch(
             loss_hist_val = torch.tensor(0.0, device=device)
             if current_loss_weights.get("histogram", 0.0) > 0:
                 # Histogram loss needs divergence values; calculate them once if not already from L_PDE
-                div_for_hist = calculate_divergence(model_output_t1[:, :3], graph_t1)  # Removed losses. prefix
-                loss_hist_val = wasserstein1_histogram_loss(div_for_hist, histogram_bins)  # Removed losses. prefix
+                div_for_hist = calculate_divergence(model_output_t1[:,:3], graph_t1) # Removed losses. prefix
+                loss_hist_val = wasserstein1_histogram_loss(div_for_hist, histogram_bins) # Removed losses. prefix
+
                 total_loss += current_loss_weights["histogram"] * loss_hist_val
 
             # Store individual (unweighted) losses for aggregation
@@ -385,13 +386,15 @@ def train_single_epoch(
                 "navier_stokes_momentum": loss_pde_mom, "lbc": loss_lbc,
                 "histogram": loss_hist_val, "alpha_dlb": current_alpha, "beta_dlb": current_beta
             }
-        else:  # Fixed weights
+        else: # Fixed weights
+
             total_loss, individual_losses = combined_loss(
                 model_output_t1=model_output_t1,
                 true_velocity_t1=true_vel_t1,
                 graph_t0=graph_t0,
                 graph_t1=graph_t1,
-                loss_weights=current_loss_weights,  # Fixed weights from config
+                loss_weights=current_loss_weights, # Fixed weights from config
+
                 reynolds_number=reynolds_number,
                 histogram_bins=histogram_bins,
                 boundary_nodes_mask=boundary_mask_t1
@@ -407,13 +410,16 @@ def train_single_epoch(
                 for param in model.parameters():
                     loss_reg += torch.sum(param.pow(2))
             else:
-                raise ValueError(
-                    f"Unknown regularization_type: {regularization_type}. Supported types are 'L1', 'L2', 'None'.")
+                raise ValueError(f"Unknown regularization_type: {regularization_type}. Supported types are 'L1', 'L2', 'None'.")
             total_loss += regularization_lambda * loss_reg
+
+        individual_losses["regularization"] = loss_reg # Store unweighted regularization loss
+
 
         individual_losses["regularization"] = loss_reg  # Store unweighted regularization loss
 
-        total_loss.backward()  # Calculate gradients for the final weighted total_loss
+        total_loss.backward() # Calculate gradients for the final weighted total_loss
+
 
         if clip_grad_norm_value:
             torch.nn.utils.clip_grad_norm_(model.parameters(), clip_grad_norm_value)
@@ -421,25 +427,25 @@ def train_single_epoch(
         optimizer.step()
 
         # Aggregate unweighted individual losses for logging
-        epoch_losses_aggregated["total"] += total_loss.item()  # Log the actual total loss that was optimized
+        epoch_losses_aggregated["total"] += total_loss.item() # Log the actual total loss that was optimized
         epoch_losses_aggregated["supervised"] += individual_losses.get("supervised", torch.tensor(0.0)).item()
         epoch_losses_aggregated["divergence"] += individual_losses.get("divergence", torch.tensor(0.0)).item()
-        epoch_losses_aggregated["navier_stokes_momentum"] += individual_losses.get("navier_stokes_momentum",
-                                                                                   torch.tensor(0.0)).item()
+        epoch_losses_aggregated["navier_stokes_momentum"] += individual_losses.get("navier_stokes_momentum", torch.tensor(0.0)).item()
         epoch_losses_aggregated["lbc"] += individual_losses.get("lbc", torch.tensor(0.0)).item()
         epoch_losses_aggregated["histogram"] += individual_losses.get("histogram", torch.tensor(0.0)).item()
-        epoch_losses_aggregated["regularization"] += (
-                    regularization_lambda * loss_reg).item()  # Log weighted reg loss contribution
+        epoch_losses_aggregated["regularization"] += (regularization_lambda * loss_reg).item() # Log weighted reg loss contribution
+
 
         # DEBUG: Log divergence and prediction stats for the first few batches
         # Note: model_output_t1[:,:3] is predicted_velocity_t1
         if num_batches < 2:
-            if "divergence_values_pred_for_debug" in individual_losses:  # This key is from original combined_loss
-                div_pred_debug = individual_losses["divergence_values_pred_for_debug"]
-            elif dlb_enabled:  # If DLB, divergence was calculated as part of L_PDE
-                div_pred_debug = losses.calculate_divergence(model_output_t1[:, :3], graph_t1)
-            else:  # From fixed-weight combined_loss
-                div_pred_debug = individual_losses.get("divergence_values_pred_for_debug")
+            if "divergence_values_pred_for_debug" in individual_losses : # This key is from original combined_loss
+                 div_pred_debug = individual_losses["divergence_values_pred_for_debug"]
+            elif dlb_enabled: # If DLB, divergence was calculated as part of L_PDE
+                 div_pred_debug = calculate_divergence(model_output_t1[:,:3], graph_t1) # Removed losses. prefix
+            else: # From fixed-weight combined_loss
+                 div_pred_debug = individual_losses.get("divergence_values_pred_for_debug")
+
 
             if div_pred_debug is not None:
                 div_pred_stats_train = {
@@ -457,7 +463,8 @@ def train_single_epoch(
                 "abs_mean": pred_vel_t1_debug.abs().mean().item()
             }
             print(f"DEBUG: Train batch {num_batches}, pred_vel_t1 stats: {pred_vel_stats_train}")
-            if model_output_t1.shape[1] > 3:  # If pressure is predicted
+            if model_output_t1.shape[1] > 3: # If pressure is predicted
+
                 pred_pressure_t1_debug = model_output_t1[:, 3]
                 pred_pressure_stats_train = {
                     "min": pred_pressure_t1_debug.min().item(), "max": pred_pressure_t1_debug.max().item(),
@@ -465,14 +472,16 @@ def train_single_epoch(
                 }
                 print(f"DEBUG: Train batch {num_batches}, pred_pressure_t1 stats: {pred_pressure_stats_train}")
 
+
         num_batches += 1
 
     if num_batches > 0:
-        for key in epoch_losses_aggregated:  # Already stores alpha and beta sums if dlb_enabled
+        for key in epoch_losses_aggregated: # Already stores alpha and beta sums if dlb_enabled
             epoch_losses_aggregated[key] /= num_batches
-        if dlb_enabled:  # Store last values of alpha, beta for info, not averaged
+        if dlb_enabled: # Store last values of alpha, beta for info, not averaged
             epoch_losses_aggregated["alpha_final_batch"] = current_alpha
             epoch_losses_aggregated["beta_final_batch"] = current_beta
+
 
     return epoch_losses_aggregated
 
@@ -524,9 +533,10 @@ def validate_on_pairs(
         "cosine_sim": [],
         "max_true_vel_mag": [],
         "max_pred_vel_mag": [],
-        "perc_points_within_10_rel_err": [],  # New metric
-        "nrmse_vel": [],  # Added NRMSE for velocity
-        "nrmse_p": []  # Added NRMSE for pressure
+        "perc_points_within_10_rel_err": [], # New metric
+        "nrmse_vel": [], # Added NRMSE for velocity
+        "nrmse_p": []    # Added NRMSE for pressure
+
     }
     # --- Probe Data Initialization ---
     probe_data_collected = []  # List to store dicts for CSV/Pandas for the detailed CSV file
@@ -534,13 +544,14 @@ def validate_on_pairs(
     wandb_table_probe_errors_data = []
     case_probe_definitions = {}  # Stores {case_name: [(target_coord_str, node_idx, target_coord_xyz), ...]}
 
-    from .data_utils import vtk_to_knn_graph, vtk_to_fullmesh_graph  # Local import
+    from .data_utils import vtk_to_knn_graph, vtk_to_fullmesh_graph # Local import
     from .metrics import (
         cosine_similarity_metric,
         calculate_perc_points_within_rel_error,
-        calculate_nrmse  # Import NRMSE
+        calculate_nrmse # Import NRMSE
     )
-    from sklearn.neighbors import NearestNeighbors  # For probe point finding
+    from sklearn.neighbors import NearestNeighbors # For probe point finding
+
 
     # Extract relevant configs from global_cfg
     # Use validation_during_training specific graph_config if available, else main graph_config
@@ -646,14 +657,15 @@ def validate_on_pairs(
 
         # Move graphs to device before model inference
         graph_t0 = graph_t0_cpu.to(device)
-        graph_t1 = graph_t1_cpu.to(device)  # Contains true_vel_t1 as .x and potentially true_pressure_t1 as .p
+        graph_t1 = graph_t1_cpu.to(device) # Contains true_vel_t1 as .x and potentially true_pressure_t1 as .p
 
-        model_output_t1 = model(graph_t0)  # Expected [N,4] if model outputs pressure
+        model_output_t1 = model(graph_t0) # Expected [N,4] if model outputs pressure
 
         # Ensure model_output_t1 is on CPU for metrics, true_vel_t1 is already from graph_t1_cpu or moved to device then cpu
         model_output_t1_cpu = model_output_t1.cpu()
         pred_vel_t1_cpu = model_output_t1_cpu[:, :3]
-        true_vel_t1_cpu = graph_t1.x.cpu()  # graph_t1.x is true velocity
+        true_vel_t1_cpu = graph_t1.x.cpu() # graph_t1.x is true velocity
+
 
         # --- Standard Metrics Calculation ---
         mse = F.mse_loss(pred_vel_t1_cpu, true_vel_t1_cpu).item()
@@ -673,7 +685,8 @@ def validate_on_pairs(
 
         # Divergence calculated on predicted velocity (needs graph structure from graph_t0 or graph_t1)
         # Using graph_t1 (current time step) for consistency with N-S loss calculation structure.
-        div_pred_tensor = calculate_divergence(model_output_t1[:, :3], graph_t1)  # Pass model_output_t1's velocity part
+        div_pred_tensor = calculate_divergence(model_output_t1[:, :3], graph_t1) # Pass model_output_t1's velocity part
+
         metrics_list["mse_div"].append((div_pred_tensor.cpu() ** 2).mean().item())
 
         cos_sim = cosine_similarity_metric(pred_vel_t1_cpu.numpy(), true_vel_t1_cpu.numpy())
@@ -696,15 +709,14 @@ def validate_on_pairs(
             pred_pressure_t1_cpu = model_output_t1_cpu[:, 3]
             true_pressure_t1_cpu = graph_t1.p.cpu()
             if pred_pressure_t1_cpu.shape == true_pressure_t1_cpu.shape:
-                nrmse_p_val = calculate_nrmse(pred_pressure_t1_cpu, true_pressure_t1_cpu,
-                                              zero_center_targets_for_pressure=True)
+                nrmse_p_val = calculate_nrmse(pred_pressure_t1_cpu, true_pressure_t1_cpu, zero_center_targets_for_pressure=True)
                 metrics_list["nrmse_p"].append(nrmse_p_val)
             else:
-                print(
-                    f"Warning: Shape mismatch for pressure fields. Pred: {pred_pressure_t1_cpu.shape}, True: {true_pressure_t1_cpu.shape}. Skipping NRMSE_p for this sample.")
+                print(f"Warning: Shape mismatch for pressure fields. Pred: {pred_pressure_t1_cpu.shape}, True: {true_pressure_t1_cpu.shape}. Skipping NRMSE_p for this sample.")
                 metrics_list["nrmse_p"].append(np.nan)
         else:
-            metrics_list["nrmse_p"].append(np.nan)  # Pressure not available or not predicted
+            metrics_list["nrmse_p"].append(np.nan) # Pressure not available or not predicted
+
 
         points_np_frame = graph_t1.pos.cpu().numpy()
 
@@ -827,8 +839,9 @@ def validate_on_pairs(
         "val_mse_z": avg_metrics.get("mse_z", np.nan),
         # "val_mse_vorticity_mag": avg_metrics.get("mse_vorticity_mag", np.nan), # Removed
         "val_perc_points_within_10_rel_err": avg_metrics.get("perc_points_within_10_rel_err", np.nan),
-        "val_nrmse_vel": avg_metrics.get("nrmse_vel", np.nan),  # Added NRMSE vel
-        "val_nrmse_p": avg_metrics.get("nrmse_p", np.nan),  # Added NRMSE pressure
+        "val_nrmse_vel": avg_metrics.get("nrmse_vel", np.nan), # Added NRMSE vel
+        "val_nrmse_p": avg_metrics.get("nrmse_p", np.nan),     # Added NRMSE pressure
+
         "val_cosine_sim": avg_metrics.get("cosine_sim", np.nan),
         "val_avg_max_true_vel_mag": avg_metrics.get("max_true_vel_mag", np.nan),
         "val_avg_max_pred_vel_mag": avg_metrics.get("max_pred_vel_mag", np.nan)
@@ -880,15 +893,17 @@ if __name__ == '__main__':
     model_cfg = {"h_dim": 32, "layers": 2, "node_out_features": 4}
     graph_cfg = {
         "k": 5, "down_n": None,
-        "velocity_key": "U", "pressure_key": "p",  # Added pressure_key for PairedFrameDataset
+        "velocity_key": "U", "pressure_key": "p", # Added pressure_key for PairedFrameDataset
+
         "noisy_velocity_key_suffix": "_noisy"
     }
     # Loss config: include new loss weights, even if zero for some tests
     loss_cfg = {
         "supervised": 1.0, "divergence": 0.1, "histogram": 0.05,
-        "navier_stokes": 0.0, "lbc": 0.0  # Keep N-S and LBC off by default for this basic test
+        "navier_stokes": 0.0, "lbc": 0.0 # Keep N-S and LBC off by default for this basic test
     }
-    re_test = 100.0  # Dummy Reynolds number
+    re_test = 100.0 # Dummy Reynolds number
+
     hist_bins = 16
 
     # Dataset and DataLoader
@@ -904,7 +919,8 @@ if __name__ == '__main__':
     # Create dummy mesh with pressure for robust testing
     points_np_test = np.random.rand(30, 3).astype(np.float64)
     velocity_np_test = np.random.rand(30, 3).astype(np.float32)
-    pressure_np_test = np.random.rand(30).astype(np.float32)  # Scalar pressure
+    pressure_np_test = np.random.rand(30).astype(np.float32) # Scalar pressure
+
     dummy_msh_with_p = meshio.Mesh(points_np_test, point_data={"U": velocity_np_test, "p": pressure_np_test})
 
     # Overwrite existing dummy VTKs with new ones that include pressure
@@ -914,20 +930,21 @@ if __name__ == '__main__':
         # frame_paths_orig.append(p_path) # Already populated
 
     # Re-create noisy dataset based on these new VTKs with pressure
-    if dummy_noisy_data_root.exists(): shutil.rmtree(dummy_noisy_data_root)  # Clear old noisy data
+    if dummy_noisy_data_root.exists(): shutil.rmtree(dummy_noisy_data_root) # Clear old noisy data
     create_noisy_dataset_tree(dummy_data_root, dummy_noisy_data_root, 0.05, 0.15,
-                              velocity_key="U",
-                              position_noise=True)  # create_noisy_dataset_tree doesn't add noise to pressure
+                              velocity_key="U", position_noise=True) # create_noisy_dataset_tree doesn't add noise to pressure
     train_frame_pairs_noisy_with_p = make_frame_pairs(dummy_noisy_data_root)
+
 
     train_ds = PairedFrameDataset(
         train_frame_pairs_noisy_with_p, graph_cfg, graph_type="knn",
-        use_noisy_data=True  # device=test_device was removed from PairedFrameDataset
+        use_noisy_data=True # device=test_device was removed from PairedFrameDataset
+
     )
     train_loader_pyg = DataLoader(train_ds, batch_size=2, shuffle=True)
 
     # Model and Optimizer
-    test_model = FlowNet(model_cfg).to(test_device)  # Model outputs 4 features
+    test_model = FlowNet(model_cfg).to(test_device) # Model outputs 4 features
     optimizer = torch.optim.Adam(test_model.parameters(), lr=1e-3)
 
     # Test train_single_epoch
@@ -944,42 +961,43 @@ if __name__ == '__main__':
     epoch_metrics_dlb_off = train_single_epoch(
         test_model, train_loader_pyg, optimizer,
         loss_weights=loss_cfg,
-        reynolds_number=re_test if loss_cfg.get("navier_stokes", 0.0) > 0.0 else None,
+        reynolds_number=re_test if loss_cfg.get("navier_stokes",0.0) > 0.0 else None,
         histogram_bins=hist_bins,
         device=test_device,
         dynamic_balancing_cfg=dummy_dlb_cfg_off
     )
     print(f"Epoch training metrics (DLB OFF): {epoch_metrics_dlb_off}")
     assert "total" in epoch_metrics_dlb_off and isinstance(epoch_metrics_dlb_off["total"], float)
-    assert "alpha" not in epoch_metrics_dlb_off or epoch_metrics_dlb_off.get(
-        "alpha_final_batch") is None  # Should not log alpha/beta if DLB off
+    assert "alpha" not in epoch_metrics_dlb_off or epoch_metrics_dlb_off.get("alpha_final_batch") is None # Should not log alpha/beta if DLB off
 
     # Test with DLB on (and some physics losses active to see balancing)
     print("\n--- Training epoch with DLB ON ---")
-    loss_cfg_for_dlb_on = {  # Activate some physics losses for DLB to work on
+    loss_cfg_for_dlb_on = { # Activate some physics losses for DLB to work on
         "supervised": 1.0, "divergence": 1.0, "navier_stokes": 1.0,
         "lbc": 1.0, "histogram": 0.0
     }
     # Reset model grads for a clean DLB test run
-    optimizer.zero_grad()  # Ensure model grads are clear
+    optimizer.zero_grad() # Ensure model grads are clear
     # test_model.apply(lambda m: [p.grad.zero_() for p in m.parameters() if p.grad is not None]) # More thorough if needed
 
     epoch_metrics_dlb_on = train_single_epoch(
         test_model, train_loader_pyg, optimizer,
         loss_weights=loss_cfg_for_dlb_on,
-        reynolds_number=re_test,  # N-S is active, so Re is needed
+        reynolds_number=re_test, # N-S is active, so Re is needed
         histogram_bins=hist_bins,
         device=test_device,
         dynamic_balancing_cfg=dummy_dlb_cfg_on
     )
+
     print(f"Epoch training metrics (DLB ON): {epoch_metrics_dlb_on}")
     assert "total" in epoch_metrics_dlb_on and isinstance(epoch_metrics_dlb_on["total"], float)
     assert "alpha_final_batch" in epoch_metrics_dlb_on and isinstance(epoch_metrics_dlb_on["alpha_final_batch"], float)
     assert "beta_final_batch" in epoch_metrics_dlb_on and isinstance(epoch_metrics_dlb_on["beta_final_batch"], float)
     # Check if specific loss components are present as expected
-    if loss_cfg_for_dlb_on.get("navier_stokes", 0) > 0:
+    if loss_cfg_for_dlb_on.get("navier_stokes",0) > 0:
         assert "navier_stokes_momentum" in epoch_metrics_dlb_on
-    if loss_cfg_for_dlb_on.get("lbc", 0) > 0:
+    if loss_cfg_for_dlb_on.get("lbc",0) > 0:
+
         assert "lbc" in epoch_metrics_dlb_on
 
     print("train_single_epoch test passed.")
@@ -987,7 +1005,7 @@ if __name__ == '__main__':
     # Test validate_on_pairs
     # The dummy_msh_with_p (which includes pressure "p") was written to dummy_data_root.
     # So, val_pairs_orig created from dummy_data_root will have pressure.
-    val_pairs_orig = make_frame_pairs(dummy_data_root)  # These files now have 'p'
+    val_pairs_orig = make_frame_pairs(dummy_data_root) # These files now have 'p'
     assert len(val_pairs_orig) >= 1, "Not enough frame pairs for validation test."
 
     print("\nTesting validate_on_pairs...")
@@ -998,29 +1016,30 @@ if __name__ == '__main__':
 
     # Construct a minimal global_cfg for the test
     dummy_global_cfg_for_val = {
-        "graph_config": graph_cfg,  # Contains velocity_key="U", pressure_key="p"
-        "velocity_key": "U",  # Top-level, might be used by validate_on_pairs if not in graph_config
+        "graph_config": graph_cfg, # Contains velocity_key="U", pressure_key="p"
+        "velocity_key": "U", # Top-level, might be used by validate_on_pairs if not in graph_config
         "pressure_key": "p",
         "noisy_velocity_key_suffix": "_noisy",
-        "default_graph_type": "knn",  # For vtk_to_knn_graph call within validate_on_pairs
-        "validation_during_training": {  # To ensure val_graph_config is used
-            "val_graph_config": graph_cfg
+        "default_graph_type": "knn", # For vtk_to_knn_graph call within validate_on_pairs
+        "validation_during_training": { # To ensure val_graph_config is used
+             "val_graph_config": graph_cfg
+
         }
         # Add other keys if validate_on_pairs starts depending on them (e.g. analysis_probes)
     }
 
-    validation_metrics, _ = validate_on_pairs(  # Ignore probe data for this test
-        model=test_model,  # This model outputs 4 features due to model_cfg
+    validation_metrics, _ = validate_on_pairs( # Ignore probe data for this test
+        model=test_model, # This model outputs 4 features due to model_cfg
         val_frame_pairs=val_pairs_orig,
-        global_cfg=dummy_global_cfg_for_val,  # Pass the minimal global_cfg
-        use_noisy_data_for_val=False,  # Using clean data for this val example
+        global_cfg=dummy_global_cfg_for_val, # Pass the minimal global_cfg
+        use_noisy_data_for_val=False, # Using clean data for this val example
         device=test_device
         # graph_type is taken from global_cfg.default_graph_type or validation_during_training.val_graph_type
     )
     print(f"Validation metrics: {validation_metrics}")
     assert "val_mse" in validation_metrics
     assert "val_nrmse_vel" in validation_metrics
-    assert "val_nrmse_p" in validation_metrics  # Should be calculated as dummy data has pressure
+    assert "val_nrmse_p" in validation_metrics # Should be calculated as dummy data has pressure
     # NRMSE values could be np.nan if, e.g., max_abs_target is zero, but keys should exist.
     assert isinstance(validation_metrics["val_nrmse_vel"], float)
     assert isinstance(validation_metrics["val_nrmse_p"], float)
