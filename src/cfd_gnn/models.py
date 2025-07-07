@@ -9,6 +9,7 @@ import torch.nn as nn
 from torch_geometric.data import Data
 from torch_scatter import scatter_add
 from torch.utils.checkpoint import checkpoint
+from torch_geometric.nn import GATv2Conv # Import GATv2Conv
 
 # Ensure this MLP is flexible enough for various uses (encoder, decoder, within GNNStep)
 def MLP(
@@ -72,6 +73,44 @@ class GNNStep(nn.Module):
         node_inputs = torch.cat([x, aggregated_messages], dim=-1)
         new_x = self.node_mlp(node_inputs)
         return new_x
+
+
+class GNNStepGATv2(nn.Module):
+    """
+    A single GNN step using GATv2Conv for message passing,
+    followed by LayerNorm, ReLU, and a residual connection.
+    It uses edge features in the attention mechanism.
+    """
+    def __init__(self, hidden_dim: int, num_heads: int = 4, activation_class=nn.ReLU, dropout_rate: float = 0.0): # Changed activation to activation_class
+        super().__init__()
+        assert hidden_dim % num_heads == 0, "hidden_dim must be divisible by num_heads"
+        head_dim = hidden_dim // num_heads
+        self.gat_conv = GATv2Conv(
+            in_channels=hidden_dim,
+            out_channels=head_dim, # Output channels per head
+            heads=num_heads,
+            concat=True, # Concatenates head outputs to give hidden_dim
+            edge_dim=hidden_dim, # Dimension of edge features
+            dropout=dropout_rate
+        )
+        self.norm = nn.LayerNorm(hidden_dim)
+        self.activation = activation_class()
+        # self.dropout = nn.Dropout(dropout_rate) # Dropout can also be applied here
+
+    def forward(self, x: torch.Tensor, edge_index: torch.Tensor, edge_attr: torch.Tensor) -> torch.Tensor:
+        """
+        Args:
+            x: Node features, shape [num_nodes, hidden_dim]
+            edge_index: Edge connectivity, shape [2, num_edges]
+            edge_attr: Edge features, shape [num_edges, hidden_dim] (output of edge_encoder)
+        """
+        identity = x
+        x_attn = self.gat_conv(x, edge_index, edge_attr=edge_attr)
+        # x_attn = self.dropout(x_attn) # Optional dropout after GAT, GATv2Conv already has dropout
+        x = self.norm(x_attn) # Apply norm to the output of GAT
+        x = self.activation(x)
+        x = x + identity # Residual connection
+        return x
 
 
 class BaseFlowGNN(nn.Module):

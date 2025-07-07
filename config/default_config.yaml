@@ -1,37 +1,33 @@
 # Default Configuration for CFD GNN Pipeline
 
 # Data roots - these should point to the directories containing your CFD cases
-# e.g., data/CFD_Ubend_other/sUbend_001/CFD/*.vtk
-train_root: "data/CFD_Ubend_other"
-val_root: "data/CFD_Ubend_other_val"
+train_root: '/home/student2/ethz/CFD_Ubend_other'
+val_root:   '/home/student2/ethz/CFD_Ubend_other_val'
+
 
 # Noisy data directories (will be created by the data preparation script)
 # These paths are relative to the project root if not absolute.
-noisy_train_root: "outputs/noisy_data/CFD_Ubend_other_noisy" # Example, script should make this configurable
-noisy_val_root: "outputs/noisy_data/CFD_Ubend_other_val_noisy"   # Example
+noisy_train_root: "/home/student2/ethz/CFD_Ubend_other_noisy" # Example, script should make this configurable
+noisy_val_root: "/home/student2/ethz/CFD_Ubend_other_val_noisy"   # Example
 
 # Graph construction parameters
-down_n: 20000   # Number of points to downsample to for kNN graphs. Set to 0 or null for no downsampling.
+down_n: 10000   # Number of points to downsample to for kNN graphs. Set to 0 or null for no downsampling.
 k: 12           # Number of nearest neighbors for kNN graph construction.
 
 # Model architecture (can be overridden by model-specific configs)
 h_dim: 128      # Hidden dimension size in GNN layers and MLPs.
 layers: 5       # Number of GNN layers.
-# More detailed model params (defaults are in src/cfd_gnn/models.py if not set here)
-# node_in_features: 3
-# edge_in_features: 3
-# node_out_features: 3
+node_out_features: 4 # Ensure model outputs 4 features (vx,vy,vz,p) for N-S and pressure NRMSE
 # encoder_mlp_layers: 2
 # decoder_mlp_layers: 2
 # gnn_step_mlp_layers: 2
 
 # Optimization parameters
 lr: 0.0002
-# lambda_p and lambda_h are now part of loss_config.weights
 nbins: 64       # Number of bins for histogram calculations (loss and JSD).
 epochs: 100     # Total number of training epochs.
-batch_size: 4
-patience: 10    # Patience for early stopping and learning rate scheduler.
+batch_size: 1   # Batch size (set to 1 for debugging, can increase later)
+patience: 20    # Patience for early stopping and learning rate scheduler (increased from 10)
 clip_grad_norm: 1.0 # Value for gradient clipping, null or 0 for no clipping.
 seed: 42
 
@@ -45,28 +41,10 @@ p_max: 0.15     # Maximum noise percentage (e.g., 0.15 for 15%).
 
 # Time extraction parameters
 time_extraction:
-  # method_priority: Defines the order of methods to attempt for extracting time from VTK files.
-  #   - "field_data": Looks for time information in the VTK file's field data arrays.
-  #                   Uses keys specified in `field_data_keys`.
-  #   - "filename": Parses the VTK filename using a regex pattern defined in `filename_pattern`.
-  #                 The regex must contain one capturing group for the time value.
-  #   - "fixed_dt": Calculates time as `frame_index * simulation_dt`. Frame index is based on
-  #                 the sorted order of VTK files in a case directory.
   method_priority: ["field_data", "filename", "fixed_dt"]
-
-  # field_data_keys: List of keys to search for in `mesh.field_data` when using the "field_data" method.
-  # Example: ["TimeValue", "TIME", "simulation_time"]
   field_data_keys: ["TimeValue", "TIME", "Time", "time"]
-
-  # filename_pattern: Regex pattern for the "filename" method. Must include one capturing group for the time value.
-  # Set to null or an empty string to disable filename-based extraction even if "filename" is in method_priority.
-  # Example for files like "case_output_t0.015.vtk": ".*_t(\\d+\\.\\d+)\\.vtk"
-  # Example for files like "Frame_0012_time_1.234_data.vtk": "Frame_\\d+_time_(\\d+\\.\\d+)_data\\.vtk"
   filename_pattern: null
-
-  # simulation_dt: The fixed time step value (in seconds or consistent units) used by the "fixed_dt" method.
-  # This is only used if "fixed_dt" is in method_priority and other prior methods fail.
-  simulation_dt: 0.01
+  simulation_dt: 0.01 # Example dt, ensure this matches your data if using fixed_dt
 
 # VTK Data Keys
 velocity_key: "U"                   # Key for ground truth velocity in input VTKs.
@@ -76,153 +54,91 @@ predicted_velocity_key: "velocity"  # Key used when saving model's predicted vel
 predicted_pressure_key: "pressure"  # Key used when saving normalized pressure in output VTKs.
 
 # Training & Validation Script Specifics
-output_base_dir: "outputs" # Base directory for all run-specific outputs (models, logs, validation VTKs)
+output_base_dir: "outputs" # Base directory for all run-specific outputs
 
-# Checkpoint paths for validation scripts (relative to output_base_dir/run_name/models/ or absolute)
-# These are the *filenames* of the checkpoints, not full paths.
+# Checkpoint paths for validation scripts
 flownet_checkpoint_name: "flownet_best.pth"
-gao_checkpoint_name: "rotflownet_best.pth" # Or "rotflownet_best.pth"
+gao_checkpoint_name: "rotflownet_best.pth"
 
-# Device: "cuda", "cpu", or "auto" (tries cuda, falls back to cpu)
+# Device: "cuda", "cpu", or "auto"
 device: "auto"
 
 # Wandb logging
-wandb_project: "CFD_GNN_Refactored" # Project name on W&B
-# wandb_entity: "your_wandb_entity"    # Optional: specify your W&B entity/team
-# wandb_run_name_prefix: "train"       # Optional: prefix for generated W&B run names
+wandb_project: "CFD_GNN_Refactored_Physics"
+# wandb_entity: "your_wandb_entity"
+# wandb_run_name_prefix: "train_physics_test"
 
-# Validation specific settings
-# For histogram validation (e.g. scripts/4_validate_histograms.py)
-# reference_data_root_hist: "outputs/noisy_data/CFD_Ubend_other_val_noisy" # Path to data used as 'real' for JSD
-# predicted_data_root_hist: "outputs/my_run/predictions/FlowNet" # Path to model predictions to compare against reference
-hist_output_root: "outputs/histogram_validation_results" # Base dir for JSD VTK heatmaps from histogram script
-
-# For model inference validation scripts (e.g., scripts/3a_validate_knn.py)
-# val_output_subdir: "validation_predictions" # Subdirectory within run_name for validation VTKs
-
-# Default model names for iterating in scripts, and for output subdirectories
+# Default model names for iterating in scripts
 model_names:
   - "FlowNet"
-  - "Gao" # Or "RotFlowNet" - ensure consistency with checkpoint names.
+  # - "Gao"
 
-# Cases to process for validation (optional, if empty all 'sUbend*' cases found will be processed)
-# Example: cases_to_process: ["sUbend_011", "sUbend_012"]
+# Cases to process for validation (empty means all 'sUbend*' cases found)
 cases_to_process: []
 
-# Graph type for training and validation (can be overridden by script arguments)
-# "knn" or "full_mesh"
+# Graph type for training and validation
 default_graph_type: "knn"
 
-# Configuration for graph building, used by data_utils and scripts
+# Configuration for graph building
 graph_config:
-  k: 12 # For kNN
-  down_n: null # For kNN, null or 0 means no downsampling
-  # velocity_key, noisy_velocity_key_suffix, pressure_key are taken from top-level config
-  # For full_mesh, k and down_n are ignored by vtk_to_fullmesh_graph
+  k: 12
+  down_n: 10000
+  # velocity_key, pressure_key, noisy_velocity_key_suffix taken from top-level
 
-# Configuration for loss functions, used by training script
+# Configuration for loss functions
 loss_config:
   weights:
-    supervised: 1.0
-    divergence: 0.1   # Continuity equation (∇·u = 0)
-    navier_stokes: 0.0 # Momentum equation. Set > 0 to enable.
-    lbc: 0.0           # Boundary condition loss. Set > 0 to enable.
-    histogram: 0.05
-  histogram_bins: 64 # Same as nbins above, but specific to loss calculation context
-  # target_divergence: null # or a specific tensor if needed. null implies 0.
-  # target_boundary_velocity: 0.0 # For LBC, default 0 (no-slip). Can be specific tensor.
-  # LBC specific:
-  # boundary_nodes_mask_key: "boundary_mask" # If mask is stored in Data object, this is the key.
+    supervised: 1.0        # Base weight for supervised loss (Ldata)
+    divergence: 1.0        # Weight for continuity (∇·u = 0) part of N-S (LPDE)
+    navier_stokes: 1.0     # Weight for momentum part of N-S (LPDE)
+    lbc: 1.0               # Base weight for LBC (boundary condition loss)
+    histogram: 0.01        # Optional: weight for histogram loss
+  histogram_bins: 64
+  # target_divergence: null # Default is 0
+  # target_boundary_velocity: 0.0 # Default for LBC (no-slip).
+  # boundary_nodes_mask_key: "boundary_mask" # Key if mask is in Data object (e.g. graph_t1.boundary_mask)
+                                          # This needs to be populated in your data loading if LBC is active.
 
   dynamic_loss_balancing:
-    enabled: false # Set to true to enable dynamic loss balancing
-    lambda_smooth: 0.1 # Smoothing factor for weight updates (paper uses 0.1)
-    initial_alpha: 1.0 # Initial weight for supervised loss (Ldata)
-    initial_beta: 1.0  # Initial weight for LBC loss
-    # LPDE (N-S momentum + continuity) is assumed to have a base weight of 1.0
-    # The 'divergence' and 'navier_stokes' weights in loss_config.weights will be
-    # overridden by dynamically calculated alpha for 'supervised' and beta for 'lbc'.
-    # The 'navier_stokes' weight will apply to the momentum part, and 'divergence' to continuity.
-    # Or, more aligned with paper L = LPDE + alpha*Ldata + beta*LBC:
-    # supervised_loss_key_for_alpha: "supervised" # Key in loss_weights to be replaced by alpha
-    # lbc_loss_key_for_beta: "lbc"                # Key in loss_weights to be replaced by beta
-    epsilon_grad_norm: 1.0e-9 # For numerical stability when dividing by grad norms
+    enabled: true              # Enable dynamic loss balancing
+    lambda_smooth: 0.1         # Smoothing factor for alpha and beta updates
+    initial_alpha: 1.0         # Initial value for alpha (Ldata dynamic weight)
+    initial_beta: 1.0          # Initial value for beta (LBC dynamic weight)
+    epsilon_grad_norm: 1.0e-9  # Stability for grad norm division
 
 # Physics parameters
 physics:
-  reynolds_number: 100.0 # Example Reynolds number, adjust as needed for your specific case.
-                         # Required if loss_config.weights.navier_stokes > 0.
+  reynolds_number: 100.0     # CRITICAL: Set appropriately for your specific case and data scaling.
 
 # Configuration for on-the-fly validation during training
 validation_during_training:
   enabled: true
   frequency: 1 # Validate every N epochs
-  use_noisy_data: true # Whether the validation set itself is noisy (like training)
-  # graph_config and graph_type will typically be same as training, or specified
-  # val_graph_type: "knn" # if different from training
-  # val_graph_config: { k: 12, down_n: null } # if different
-  # val_data_root will be val_root or noisy_val_root based on use_noisy_data
+  use_noisy_data: true # Whether the validation set itself is noisy
+  # val_graph_type: "knn" # Default taken from default_graph_type
+  # val_graph_config: {} # Default taken from graph_config
+  save_validation_fields_vtk: true # Save some VTK files during validation epochs
+  log_field_image_sample_idx: 0    # Log field image for the first validation sample
 
 # Configuration for histogram validation performed after training in the main training script
 histogram_validation_after_training:
-  enabled: true
-  # reference_data_root: "outputs/noisy_data/CFD_Ubend_other_val_noisy" # Data to compare against
-  # predicted_data_root: null # Will be generated on the fly using the trained model
-  # output_dir_jsd: "histograms" # Subdirectory in run output for JSD results
-  # velocity_key_ref: "U_noisy"
-  # graph_config_val: from main graph_config
-  # graph_type_val: from main default_graph_type
-  # model_name_prefix will be the current model being trained ("FlowNet" or "Gao")
-  nbins_jsd: 64 # nbins for JSD calculation (can be different from loss nbins)
+  enabled: false # Can be enabled for detailed post-training analysis
+  nbins_jsd: 64
 
 # Configuration for slice-based velocity analysis during validation
 slice_analysis:
-  enabled: true                 # Enable/disable slice analysis
-  axes: ["X", "Y", "Z"]         # Axes along which to take slices
-  num_per_axis: 3               # Number of slices to take per specified axis
-  # Positions will be calculated at 25%, 50%, 75% of the bounding box extent along the axis if num_per_axis is 3.
-  # For num_per_axis = 1, it will be at 50%. For num_per_axis = 2, at 33% and 66%.
-  # Custom positions can be an alternative future feature.
-  thickness_percent: 1.0        # Thickness of the slice as a percentage of the bounding box extent along the slicing axis (e.g., 1.0 for 1%)
+  enabled: false # Can be enabled for detailed post-training analysis
+  axes: ["X", "Y", "Z"]
+  num_per_axis: 3
+  thickness_percent: 1.0
 
-# --------------------------------------------------------------------------- #
-# Analysis Probes: Configuration for extracting time-series data at specific points and slices.
-# This data is saved to CSV files by scripts/5_combined_validation.py and can be visualized
-# by scripts/7_create_visualizations.py.
-# --------------------------------------------------------------------------- #
+# Analysis Probes configuration
 analysis_probes:
   points:
-    # enabled: Set to true to activate point probing.
     enabled: false
-
-    # coordinates: A list of [x,y,z] coordinates for direct data probing.
-    # Velocity and derived quantities (vorticity, gradients, divergence) will be
-    # sampled at the mesh node nearest to each specified target coordinate.
-    # Example:
-    # coordinates:
-    #   - [0.05, 0.01, 0.0]  # Probe point 1
-    #   - [0.10, 0.02, 0.0]  # Probe point 2
     coordinates: []
-
-    # velocity_field_name: Base name for velocity fields in the output CSV for point probes.
-    # True velocity will be 'true_<name>', predicted will be 'pred_<name>'.
-    # Example: if "velocity", columns will be 'true_velocity', 'pred_velocity'.
     velocity_field_name: "velocity"
-
   slices:
-    # enabled: Set to true to activate slice probing.
     enabled: false
-
-    # definitions: A list of slice definitions. Each definition is a dictionary specifying:
-    #   - axis: "X", "Y", or "Z" (the normal to the slice plane).
-    #   - position: float, the coordinate value along the specified axis for the slice's center.
-    #   - thickness: float, the total thickness of the slice. Points within position +/- (thickness/2) are included.
-    # Example:
-    # definitions:
-    #   - {axis: "X", position: 0.05, thickness: 0.005} # Slice at X=0.05, thickness 0.005
-    #   - {axis: "Y", position: 0.0,  thickness: 0.01}  # Slice at Y=0.0,  thickness 0.01
     definitions: []
-
-    # velocity_field_name: Base name for velocity fields related to slices in output CSV (primarily for consistency).
-    # Currently, slice outputs are averaged quantities like 'avg_true_vel_mag'.
     velocity_field_name: "velocity_on_slice"
