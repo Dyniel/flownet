@@ -100,7 +100,7 @@ loss_config:
   # boundary_nodes_mask_key: "boundary_mask" # If mask is stored in Data object, this is the key.
 
   dynamic_loss_balancing:
-    enabled: false # Set to true to enable dynamic loss balancing
+    enabled: true # Set to true to enable dynamic loss balancing
     lambda_smooth: 0.1 # Smoothing factor for weight updates (paper uses 0.1)
     initial_alpha: 1.0 # Initial weight for supervised loss (Ldata)
     initial_beta: 1.0  # Initial weight for LBC loss

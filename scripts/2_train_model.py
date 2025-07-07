@@ -404,14 +404,15 @@ def main():
                     # g1_sample is used for real_sample = g1_sample.x.cpu(), so it can stay on CPU or be moved if needed by other logic
                     # For model(g0_sample), only g0_sample needs to be on device.
 
-                    with torch.no_grad(): pred_sample = model(g0_sample).cpu()
-                    real_sample = g1_sample.x.cpu() # True velocity from the target frame
+                    with torch.no_grad(): pred_sample_full = model(g0_sample).cpu() # Might be [N, 4]
+                    pred_sample_vel = pred_sample_full[:, :3] # Take only velocity components [N, 3]
+                    real_sample_vel = g1_sample.x.cpu() # True velocity from the target frame, should be [N, 3]
 
-                    tke_pred_s = turbulent_kinetic_energy(pred_sample)
-                    tke_real_s = turbulent_kinetic_energy(real_sample)
+                    tke_pred_s = turbulent_kinetic_energy(pred_sample_vel)
+                    tke_real_s = turbulent_kinetic_energy(real_sample_vel)
                     if abs(tke_real_s) > 1e-9:
                         sample_rel_tke_err = abs(tke_pred_s - tke_real_s) / abs(tke_real_s)
-                    sample_cos_sim = cosine_similarity_metric(pred_sample, real_sample)
+                    sample_cos_sim = cosine_similarity_metric(pred_sample_vel, real_sample_vel)
                     log_dict_epoch[f"{model_name}/sample_rel_TKE_err"] = sample_rel_tke_err
                     log_dict_epoch[f"{model_name}/sample_cosine_sim"] = sample_cos_sim
                 except Exception as e:
