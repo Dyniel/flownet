@@ -408,6 +408,132 @@ if __name__ == '__main__':
 
     print("\nmetrics.py tests complete.")
 
+    # Test NRMSE
+    print("\nTesting NRMSE...")
+    pred_nrmse_np = np.array([[1.1, 0.1, -0.1], [0.2, 1.2, 0.8]], dtype=np.float32)
+    targ_nrmse_np = np.array([[1.0, 0.0, 0.0], [0.0, 1.0, 1.0]], dtype=np.float32)
+    # Errors: [[0.1, 0.1, -0.1], [0.2, 0.2, -0.2]]
+    # Squared errors per vector: [0.01+0.01+0.01=0.03], [0.04+0.04+0.04=0.12]
+    # MSE = (0.03 + 0.12)/2 = 0.15/2 = 0.075. RMSE = sqrt(0.075) approx 0.27386
+    # Max target norm: ||[0,1,1]|| = sqrt(2) approx 1.414
+    # NRMSE_vel = 0.27386 / 1.414 approx 0.1936
+    nrmse_vel_np = calculate_nrmse(pred_nrmse_np, targ_nrmse_np)
+    print(f"NRMSE Velocity (NumPy): {nrmse_vel_np:.4f}")
+    assert np.isclose(nrmse_vel_np, 0.1936, atol=1e-4), "NRMSE Velocity (NumPy) test failed."
+
+    pred_nrmse_torch = torch.tensor(pred_nrmse_np)
+    targ_nrmse_torch = torch.tensor(targ_nrmse_np)
+    nrmse_vel_torch = calculate_nrmse(pred_nrmse_torch, targ_nrmse_torch)
+    print(f"NRMSE Velocity (Torch): {nrmse_vel_torch:.4f}")
+    assert np.isclose(nrmse_vel_torch, 0.1936, atol=1e-4), "NRMSE Velocity (Torch) test failed."
+
+    # Test NRMSE for scalar field (e.g. pressure)
+    pred_p_np = np.array([101.0, 102.5, 99.0], dtype=np.float32)
+    targ_p_np = np.array([100.0, 102.0, 100.0], dtype=np.float32)
+    # Errors: [1.0, 0.5, -1.0]
+    # Squared errors: [1.0, 0.25, 1.0]. MSE = (1+0.25+1)/3 = 2.25/3 = 0.75. RMSE = sqrt(0.75) approx 0.866
+    # Targ_centered: targets - mean(100.666) = [-0.666, 1.333, -0.666]
+    # Max_abs_targ_centered = 1.333
+    # NRMSE_p = 0.866 / 1.333 approx 0.6497
+    nrmse_p_np = calculate_nrmse(pred_p_np, targ_p_np, zero_center_targets_for_pressure=True)
+    print(f"NRMSE Pressure (NumPy, zero-centered): {nrmse_p_np:.4f}")
+    assert np.isclose(nrmse_p_np, 0.6497, atol=1e-4), "NRMSE Pressure (NumPy) test failed."
+
+    pred_p_torch = torch.tensor(pred_p_np)
+    targ_p_torch = torch.tensor(targ_p_np)
+    nrmse_p_torch = calculate_nrmse(pred_p_torch, targ_p_torch, zero_center_targets_for_pressure=True)
+    print(f"NRMSE Pressure (Torch, zero-centered): {nrmse_p_torch:.4f}")
+    assert np.isclose(nrmse_p_torch, 0.6497, atol=1e-4), "NRMSE Pressure (Torch) test failed."
+    print("NRMSE tests passed.")
+
+
+def calculate_nrmse(
+    predictions: torch.Tensor | np.ndarray,
+    targets: torch.Tensor | np.ndarray,
+    zero_center_targets_for_pressure: bool = False,
+    epsilon: float = EPS
+) -> float:
+    """
+    Calculates the Normalized Root Mean Square Error (NRMSE).
+    NRMSE = RMSE / (max(targets) - min(targets)) or RMSE / max|targets| depending on context.
+    Using max|targets| as per the paper: (1 / max|u_gt|) * sqrt( (1/N) * Σ ||u_pred - u_gt||² )
+    For pressure, targets are zero-centered first if specified.
+
+    Args:
+        predictions: Predicted values, shape [num_points, num_components] or [num_points].
+        targets: Target values, same shape as predictions.
+        zero_center_targets_for_pressure: If True, subtracts mean from targets before calculating max abs value
+                                         (used for pressure NRMSE as per paper).
+        epsilon: Small value to prevent division by zero in normalization.
+
+    Returns:
+        Scalar NRMSE value.
+    """
+    is_torch = isinstance(predictions, torch.Tensor)
+
+    if is_torch:
+        if not isinstance(targets, torch.Tensor):
+            targets = torch.from_numpy(targets).to(predictions.device).type_as(predictions)
+
+        if zero_center_targets_for_pressure:
+            # This is for pressure NRMSE. Targets are zero-centered at each time step (not handled here).
+            # The paper says: "pressure NRMSE then assumes the same form as velocity NRMSE"
+            # "we shifted the predicted pressure values by the difference in predicted and ground truth means."
+            # "pressure NRMSE values are mean-normalised" for 3D case.
+            # Let's assume for this function, if zero_center is true, we do it globally on the input targets.
+            targets_for_norm = targets - torch.mean(targets)
+        else:
+            targets_for_norm = targets
+
+        # RMSE part: sqrt(mean_squared_error)
+        # If predictions/targets are vectors [N, D], mse is mean of sum of squared errors per vector.
+        if predictions.ndim > 1 and predictions.shape[-1] > 1: # Vector field
+            squared_error = (predictions - targets).pow(2).sum(dim=-1) # Sum over components
+            mse = torch.mean(squared_error) # Mean over N points
+        else: # Scalar field
+            mse = torch.mean((predictions - targets).pow(2))
+        rmse = torch.sqrt(mse)
+
+        # Normalization factor: max absolute value of targets (or zero-centered targets)
+        # For vector fields like velocity, max|u_gt| means max of vector norms.
+        if targets_for_norm.ndim > 1 and targets_for_norm.shape[-1] > 1: # Vector field
+            max_abs_target = torch.linalg.norm(targets_for_norm, dim=-1).max()
+        else: # Scalar field
+            max_abs_target = torch.abs(targets_for_norm).max()
+
+        if max_abs_target < epsilon: # Avoid division by zero if targets are all zero
+            return float(rmse.item()) # Return raw RMSE if normalization factor is zero
+
+        nrmse = rmse / max_abs_target
+        return float(nrmse.item())
+
+    else: # Numpy
+        if not isinstance(targets, np.ndarray):
+            targets = np.array(targets, dtype=predictions.dtype)
+
+        if zero_center_targets_for_pressure:
+            targets_for_norm = targets - np.mean(targets)
+        else:
+            targets_for_norm = targets
+
+        if predictions.ndim > 1 and predictions.shape[-1] > 1: # Vector field
+            squared_error = np.sum((predictions - targets)**2, axis=-1)
+            mse = np.mean(squared_error)
+        else: # Scalar field
+            mse = np.mean((predictions - targets)**2)
+        rmse = np.sqrt(mse)
+
+        if targets_for_norm.ndim > 1 and targets_for_norm.shape[-1] > 1: # Vector field
+            max_abs_target = np.max(np.linalg.norm(targets_for_norm, axis=-1))
+        else: # Scalar field
+            max_abs_target = np.max(np.abs(targets_for_norm))
+
+        if max_abs_target < epsilon:
+            return float(rmse)
+
+        nrmse = rmse / max_abs_target
+        return float(nrmse)
+
 
 def calculate_perc_points_within_rel_error(
     true_vel_np: np.ndarray,
