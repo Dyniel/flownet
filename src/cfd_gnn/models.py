@@ -80,9 +80,9 @@ class BaseFlowGNN(nn.Module):
     """
     def __init__(
         self,
-        node_in_features: int = 3,
-        edge_in_features: int = 3,
-        node_out_features: int = 3,
+        node_in_features: int = 3,      # Number of input features per node (e.g., 3 for velocity u,v,w)
+        edge_in_features: int = 3,      # Number of input features per edge (e.g., 3 for relative position dx,dy,dz)
+        node_out_features: int = 4,     # Number of output features per node (e.g., 3 for velocity u,v,w + 1 for pressure p)
         hidden_dim: int = 128,
         num_gnn_layers: int = 5,
         encoder_mlp_layers: int = 2,
@@ -151,9 +151,9 @@ class BaseFlowGNN(nn.Module):
 class FlowNet(BaseFlowGNN):
     def __init__(self, cfg: dict):
         super().__init__(
-            node_in_features=cfg.get("node_in_features", 3),
-            edge_in_features=cfg.get("edge_in_features", 3),
-            node_out_features=cfg.get("node_out_features", 3),
+            node_in_features=cfg.get("node_in_features", 3), # Should typically be 3 (vx, vy, vz)
+            edge_in_features=cfg.get("edge_in_features", 3), # Should typically be 3 (dx, dy, dz)
+            node_out_features=cfg.get("node_out_features", 4), # Now defaults to 4 (vx, vy, vz, p)
             hidden_dim=cfg.get("h_dim", 128),
             num_gnn_layers=cfg.get("layers", 5),
             encoder_mlp_layers=cfg.get("encoder_mlp_layers", 2),
@@ -167,7 +167,7 @@ class RotFlowNet(BaseFlowGNN):
         super().__init__(
             node_in_features=cfg.get("node_in_features", 3),
             edge_in_features=cfg.get("edge_in_features", 3),
-            node_out_features=cfg.get("node_out_features", 3),
+            node_out_features=cfg.get("node_out_features", 4), # Now defaults to 4 (vx, vy, vz, p)
             hidden_dim=cfg.get("h_dim", 128),
             num_gnn_layers=cfg.get("layers", 5),
             encoder_mlp_layers=cfg.get("encoder_mlp_layers", 2),
@@ -182,7 +182,7 @@ class FlowNetGATv2(BaseFlowGNN):
         super().__init__(
             node_in_features=cfg.get("node_in_features", 3),
             edge_in_features=cfg.get("edge_in_features", 3),
-            node_out_features=cfg.get("node_out_features", 3),
+            node_out_features=cfg.get("node_out_features", 4), # Now defaults to 4 (vx, vy, vz, p)
             hidden_dim=cfg.get("h_dim", 128),
             num_gnn_layers=cfg.get("layers", 5), # This will determine loop in BaseFlowGNN, but we override convs
             encoder_mlp_layers=cfg.get("encoder_mlp_layers", 2),
@@ -211,31 +211,63 @@ class FlowNetGATv2(BaseFlowGNN):
 if __name__ == '__main__':
     print("Testing models.py...")
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    config_params = {
-        "node_in_features": 3, "edge_in_features": 3, "node_out_features": 3,
+    # Test with default node_out_features (should be 4)
+    config_params_default_out = {
+        "node_in_features": 3, "edge_in_features": 3, # "node_out_features": 4, # Implicitly 4
         "h_dim": 64, "layers": 2, "encoder_mlp_layers": 2, "decoder_mlp_layers": 2,
-        "gnn_step_mlp_layers": 2, "checkpoint_edge_encoder_internals": True # Test granular checkpointing
+        "gnn_step_mlp_layers": 2, "checkpoint_edge_encoder_internals": True
     }
-    num_nodes, num_edges = 10, 20
-    dummy_x = torch.randn(num_nodes, config_params["node_in_features"], device=device)
-    dummy_edge_index = torch.randint(0, num_nodes, (2, num_edges), device=device)
-    # Make edge_attr require grad for testing checkpointing if it's a leaf
-    dummy_edge_attr = torch.randn(num_edges, config_params["edge_in_features"], device=device)
-    dummy_pos = torch.randn(num_nodes, 3, device=device)
-    dummy_data = Data(x=dummy_x, edge_index=dummy_edge_index, edge_attr=dummy_edge_attr, pos=dummy_pos).to(device)
+    # Test with explicit node_out_features override
+    config_params_explicit_out = {
+        "node_in_features": 3, "edge_in_features": 3, "node_out_features": 3, # Explicitly 3 for velocity only
+        "h_dim": 64, "layers": 2, "encoder_mlp_layers": 2, "decoder_mlp_layers": 2,
+        "gnn_step_mlp_layers": 2, "checkpoint_edge_encoder_internals": False # Test without this too
+    }
 
-    flownet_model = FlowNet(config_params).to(device)
-    print("\nFlowNet Model (with granular checkpointing for edge_encoder if enabled by config):")
-    print(flownet_model)
+    num_nodes, num_edges = 10, 20
+    # Create dummy data based on standard 3-feature input
+    dummy_x_in = torch.randn(num_nodes, config_params_default_out["node_in_features"], device=device)
+    dummy_edge_attr_in = torch.randn(num_edges, config_params_default_out["edge_in_features"], device=device)
+    dummy_edge_index = torch.randint(0, num_nodes, (2, num_edges), device=device)
+    dummy_pos = torch.randn(num_nodes, 3, device=device) # Pos is always 3D for this context
+
+    dummy_data_generic = Data(
+        x=dummy_x_in,
+        edge_index=dummy_edge_index,
+        edge_attr=dummy_edge_attr_in,
+        pos=dummy_pos
+    ).to(device)
+
+    # Test FlowNet with default output features (4)
+    print("\n--- Testing FlowNet with default output (4 features) ---")
+    flownet_model_default = FlowNet(config_params_default_out).to(device)
+    print(flownet_model_default)
     try:
-        # Ensure model is in training mode for checkpointing effects if they differ
-        flownet_model.train()
-        output_flownet = flownet_model(dummy_data)
-        print(f"FlowNet output shape: {output_flownet.shape}")
-        # Dummy backward pass to check if checkpointing recomputation works
-        output_flownet.sum().backward()
-        print("FlowNet forward and backward pass with granular checkpointing successful.")
+        flownet_model_default.train()
+        output_flownet_default = flownet_model_default(dummy_data_generic)
+        print(f"FlowNet (default out) output shape: {output_flownet_default.shape}")
+        assert output_flownet_default.shape == (num_nodes, 4), \
+            f"Expected output shape ({num_nodes}, 4), got {output_flownet_default.shape}"
+        output_flownet_default.sum().backward()
+        print("FlowNet (default out) forward and backward pass successful.")
     except Exception as e:
-        print(f"Error during FlowNet forward/backward pass with granular checkpointing: {e}")
+        print(f"Error during FlowNet (default out) pass: {e}")
         raise
+
+    # Test FlowNet with explicit output features (3)
+    print("\n--- Testing FlowNet with explicit output (3 features) ---")
+    flownet_model_explicit = FlowNet(config_params_explicit_out).to(device)
+    print(flownet_model_explicit)
+    try:
+        flownet_model_explicit.train()
+        output_flownet_explicit = flownet_model_explicit(dummy_data_generic)
+        print(f"FlowNet (explicit out) output shape: {output_flownet_explicit.shape}")
+        assert output_flownet_explicit.shape == (num_nodes, 3), \
+            f"Expected output shape ({num_nodes}, 3), got {output_flownet_explicit.shape}"
+        output_flownet_explicit.sum().backward()
+        print("FlowNet (explicit out) forward and backward pass successful.")
+    except Exception as e:
+        print(f"Error during FlowNet (explicit out) pass: {e}")
+        raise
+
     print("\nmodels.py tests passed.")
