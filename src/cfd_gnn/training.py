@@ -681,8 +681,8 @@ def validate_on_pairs(
 
         # Vorticity calculation and metric removed
         # if points_np_frame.shape[1] == 3: # Only if 3D data
-        #     true_vort_mag_np = calculate_vorticity_magnitude(points_np_frame, true_vel_t1.cpu().numpy())
-        #     pred_vort_mag_np = calculate_vorticity_magnitude(points_np_frame, predicted_vel_t1.cpu().numpy())
+        #     true_vort_mag_np = calculate_vorticity_magnitude(points_np_frame, true_vel_t1_cpu.numpy()) # Corrected
+        #     pred_vort_mag_np = calculate_vorticity_magnitude(points_np_frame, pred_vel_t1_cpu.numpy()) # Corrected
         #     if true_vort_mag_np is not None and pred_vort_mag_np is not None and \
         #        true_vort_mag_np.shape == pred_vort_mag_np.shape:
         #         mse_vort_mag = np.mean((true_vort_mag_np - pred_vort_mag_np) ** 2)
@@ -696,9 +696,9 @@ def validate_on_pairs(
             frame_time_val = graph_t0.time.item() if hasattr(graph_t0, 'time') and graph_t0.time is not None else float(i)
 
             for probe_idx, (target_coord_str, node_idx, target_coord_actual_xyz) in enumerate(case_probe_definitions[current_case_name]):
-                if 0 <= node_idx < true_vel_t1.shape[0]: # Check if node_idx is valid for current graph
-                    true_probe_vel_vals = true_vel_t1[node_idx].cpu().numpy()
-                    pred_probe_vel_vals = predicted_vel_t1[node_idx].cpu().numpy()
+                if 0 <= node_idx < true_vel_t1_cpu.shape[0]: # Check if node_idx is valid for current graph, using CPU tensor shape
+                    true_probe_vel_vals = true_vel_t1_cpu[node_idx].numpy() # Use CPU tensor and .numpy()
+                    pred_probe_vel_vals = pred_vel_t1_cpu[node_idx].numpy() # Use CPU tensor and .numpy()
 
                     true_probe_mag_val = np.linalg.norm(true_probe_vel_vals)
                     pred_probe_mag_val = np.linalg.norm(pred_probe_vel_vals)
@@ -734,7 +734,8 @@ def validate_on_pairs(
         # --- VTK Saving and Plotting (using points_np_frame) ---
         if save_fields_vtk and output_base_dir and points_np_frame is not None:
             try:
-                error_mag_for_vtk = torch.norm(predicted_vel_t1 - true_vel_t1, dim=1)
+                # Use CPU tensors for error calculation and NumPy conversion
+                error_mag_for_vtk = torch.norm(pred_vel_t1_cpu - true_vel_t1_cpu, dim=1)
                 frame_name_stem = path_t1.stem
                 # case_name is current_case_name
                 epoch_folder_name = f"epoch_{epoch_num}" if epoch_num >= 0 else "final_validation"
@@ -742,15 +743,15 @@ def validate_on_pairs(
                 vtk_output_dir.mkdir(parents=True, exist_ok=True)
                 vtk_file_path = vtk_output_dir / f"{frame_name_stem}_fields.vtk"
 
-                true_vel_np = true_vel_t1.cpu().numpy()
-                pred_vel_np = predicted_vel_t1.cpu().numpy()
+                true_vel_np = true_vel_t1_cpu.numpy()
+                pred_vel_np = pred_vel_t1_cpu.numpy()
                 delta_v_vectors = true_vel_np - pred_vel_np
 
                 point_data_for_vtk = {
                     "true_velocity": true_vel_np,
                     "predicted_velocity": pred_vel_np,
                     "delta_velocity_vector": delta_v_vectors, # Add delta_v vector field
-                    "velocity_error_magnitude": error_mag_for_vtk.cpu().numpy()
+                    "velocity_error_magnitude": error_mag_for_vtk.numpy() # error_mag_for_vtk is already CPU
                 }
                 # Vorticity fields removed from VTK output
                 # if points_np_frame.shape[1] == 3: # Vorticity only for 3D
@@ -764,10 +765,11 @@ def validate_on_pairs(
                 print(f"Warning: Could not save detailed VTK fields for {path_t1.name}: {e_vtk}")
 
         if i == log_field_image_sample_idx and points_np_frame is not None and points_np_frame.shape[0] > 0:
-            error_mag_tensor_for_plot = torch.norm(predicted_vel_t1 - true_vel_t1, dim=1)
+            # Use CPU tensors for error calculation and for passing to the plot function
+            error_mag_tensor_for_plot = torch.norm(pred_vel_t1_cpu - true_vel_t1_cpu, dim=1)
             # Vorticity data removed from this call
             _log_and_save_field_plots(
-                points_np=points_np_frame, true_vel_tensor=true_vel_t1, pred_vel_tensor=predicted_vel_t1,
+                points_np=points_np_frame, true_vel_tensor=true_vel_t1_cpu, pred_vel_tensor=pred_vel_t1_cpu,
                 error_mag_tensor=error_mag_tensor_for_plot, pred_div_tensor=div_pred_tensor, # Pass div_pred_tensor
                 # pred_vort_mag_np=None, # Vorticity removed
                 point_compliance_np=point_compliance_data, # Pass new compliance data
